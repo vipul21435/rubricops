@@ -151,14 +151,17 @@ Decisions made while building it:
   (unit, rater, rating) layout and, like the YAML loader, rejects rather than
   guesses: repeated units or (unit, rater) pairs, ragged rows and malformed quoting
   are errors with line numbers.
-- The CLI accepts all six registered metrics (`cohen`, `cohen-linear`,
-  `cohen-quadratic`, `fleiss`, `alpha-nominal`, `alpha-interval`), repeatable. A
+- The CLI accepts all nine registered metrics (`cohen`, `cohen-linear`,
+  `cohen-quadratic`, `fleiss`, `ac1`, `ac2-linear`, `ac2-quadratic`, `alpha-nominal`,
+  `alpha-interval`), repeatable. A
   metric that cannot apply to the data is an error on its own line (exit 1) while the
   others still print.
 
 Goal: `rubricops.stats.agreement` implements, in numpy:
 - Cohen's kappa for two raters: unweighted, plus linear and quadratic weighted
 - Fleiss' kappa for a fixed number of raters per item
+- Gwet's AC1 and weighted AC2 (linear, quadratic) - the anti-kappa-paradox
+  coefficients, handling missing ratings and varying raters per unit
 - Krippendorff's alpha, nominal and interval, via the coincidence matrix. It handles
   missing ratings and varying raters per unit, and drops units with fewer than two
   ratings.
@@ -170,7 +173,7 @@ number of resamples and number of degenerate resamples skipped.
 Degenerate inputs have defined, documented behaviour: perfect agreement, a single
 category or zero expected disagreement returns NaN with a reason rather than raising.
 
-CLI: `rubricops agreement FILE.csv --metric cohen|fleiss|alpha-nominal|alpha-interval --ci 0.95`.
+CLI: `rubricops agreement FILE.csv --metric cohen|fleiss|ac1|alpha-nominal|alpha-interval --ci 0.95`.
 
 Commits:
 - (a) Cohen

@@ -33,6 +33,9 @@ class Metric(StrEnum):
     fleiss = "fleiss"
     alpha_nominal = "alpha-nominal"
     alpha_interval = "alpha-interval"
+    ac1 = "ac1"
+    ac2_linear = "ac2-linear"
+    ac2_quadratic = "ac2-quadratic"
 
 
 class Layout(StrEnum):
