@@ -278,6 +278,14 @@ def test_a_failed_assignment_does_not_move_the_round_robin_cursor(world: World) 
     assert rr.cursor == world.reviewer1
 
 
+def test_a_refused_assignment_leaves_the_item_queued(world: World) -> None:
+    queue = _queue(world)
+    sid = _submit(world)
+    with pytest.raises(Forbidden):
+        queue.assign_next(LoadBalanced(), actor_id=world.author)
+    assert world.service.get_submission(sid).status == Status.QUEUED.value
+
+
 def test_new_reviewer_counts_only_reviews_written_before_the_sampled_one(world: World) -> None:
     sids = [_reviewed(world, HIGH) for _ in range(3)]
     queue = _queue(world, min_reviews=2)
