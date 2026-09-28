@@ -268,7 +268,7 @@ Commits:
   properties: nothing reaches finalized without a primary review, and there is one
   audit event per applied transition
 
-### Slice 4: Review queue: assignment policies, SLAs and QA sampling [x] done (service wiring open)
+### Slice 4: Review queue: assignment policies, SLAs and QA sampling [x] done
 
 Decisions made while building it:
 - The capacity cap applies to every policy, not only `LoadBalanced`: a reviewer at
@@ -277,8 +277,8 @@ Decisions made while building it:
   `SkillTagMatch`) and the first that applies is reported.
 - The round-robin cursor is the id of the last reviewer assigned, not a list index,
   so a reviewer joining or leaving does not shift everyone's turn. It needs no table
-  of its own: the CLI prints it for the caller to keep, and the latest assignment
-  row already records it once the service is wired.
+  of its own: the CLI prints it for the caller to keep, and the queue service reads
+  it from the latest primary assignment row.
 - `assign_batch` counts each assignment towards the reviewer's open load for the
   rest of the batch, so caps and balancing hold across a run.
 - Round-robin ignores skill tags by design; `SkillTagMatch` is the policy for
@@ -296,8 +296,16 @@ Decisions made while building it:
 - The calibration hook is a `flagged` boolean per reviewer until slice 5 computes it.
 - The queue CLI runs on a scenario file (YAML or JSON, strict like the rubric
   loader) so policies can be compared without a database.
-- Still open: `rubricops.services.queue` (`assign_next`, `sweep_overdue`,
-  `sample_for_qa` against the database, wired into the pipeline service).
+- `rubricops.services.queue.QueueService` acts only through `PipelineService.apply`,
+  which gained a `context` argument stored on the audit event: `assign_next` records
+  the policy and cursor, `sample_for_qa` the reasons, draw, rate and seed, then
+  sends the item to QA or finalizes it. `PipelineService` also takes an `SlaPolicy`,
+  so `due_at` honours per-rubric overrides. `assign_next` handles primary
+  assignments; a QA audit is still taken by any eligible reviewer under the
+  pipeline's guards. For low agreement the service uses every other review score on
+  the item, including earlier rounds.
+- Still open: the queue CLI reads scenario files; a `--url` mode that runs the same
+  commands against the database.
 
 Goal: `rubricops.domain.queue` defines an `AssignmentPolicy` protocol with three
 policies:

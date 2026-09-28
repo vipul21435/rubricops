@@ -49,6 +49,7 @@ from rubricops.domain.pipeline import (
 )
 from rubricops.domain.rubric import Rubric
 from rubricops.domain.scoring import ScoreResult, score_review
+from rubricops.domain.sla import SlaPolicy
 from rubricops.domain.versioning import UnchangedRubricError, canonical_json, content_hash
 from rubricops.services.audit import append_event
 
@@ -112,11 +113,13 @@ class PipelineService:
         *,
         policy: PipelinePolicy | None = None,
         review_sla: timedelta = timedelta(hours=24),
+        sla: SlaPolicy | None = None,
     ) -> None:
+        """``sla`` (default turnaround plus per-rubric overrides) wins over ``review_sla``."""
         self._sessions = sessions
         self._clock = clock
         self._policy = policy or PipelinePolicy()
-        self._review_sla = review_sla
+        self._sla = sla or SlaPolicy(review_sla)
 
     # -- setup ------------------------------------------------------------------
 
@@ -234,8 +237,13 @@ class PipelineService:
         assignee_id: int | None = None,
         scores: Mapping[str, object] | None = None,
         comment: str | None = None,
+        context: Mapping[str, Any] | None = None,
     ) -> TransitionResult:
-        """Apply ``action`` to a submission the caller last saw at ``expected_version``."""
+        """Apply ``action`` to a submission the caller last saw at ``expected_version``.
+
+        ``context`` is stored on the audit event under ``"context"``, for example the
+        queue policy that chose an assignee or the reasons behind a QA decision.
+        """
         try:
             with session_scope(self._sessions) as session:
                 return self._apply(
@@ -247,6 +255,7 @@ class PipelineService:
                     assignee_id=assignee_id,
                     scores=scores,
                     comment=comment,
+                    context=context,
                 )
         except StaleDataError as exc:
             raise StaleSubmission(submission_id, expected_version, None) from exc
@@ -262,6 +271,7 @@ class PipelineService:
         assignee_id: int | None,
         scores: Mapping[str, object] | None,
         comment: str | None,
+        context: Mapping[str, Any] | None,
     ) -> TransitionResult:
         submission = session.get(Submission, submission_id, with_for_update=True)
         if submission is None:
@@ -305,6 +315,8 @@ class PipelineService:
 
         now = self._now()
         data: dict[str, Any] = {"round": submission.round}
+        if context:
+            data["context"] = dict(context)
         review = None
         if stage is not None and result is not None:
             review = self._write_review(
@@ -414,6 +426,7 @@ class PipelineService:
         """Open, close or release the primary assignment, and start a new round on resubmit."""
         open_assignment = current.assignment
         if action is Action.ASSIGN and assignee is not None:
+            rubric_id = self._rubric_version(session, submission.rubric_version_id).rubric_id
             session.add(
                 Assignment(
                     submission_id=submission.id,
@@ -421,7 +434,7 @@ class PipelineService:
                     stage=Stage.PRIMARY.value,
                     round=submission.round,
                     assigned_at=now,
-                    due_at=now + self._review_sla,
+                    due_at=self._sla.due_at(now, rubric_id),
                 )
             )
             data["assignee_id"] = assignee.id

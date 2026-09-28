@@ -30,7 +30,7 @@ and the web service are on the [Roadmap](#roadmap).
 | Review pipeline | A pure state machine: queued -> assigned -> in_review -> reviewed -> finalized, or via qa_pending -> qa_passed / qa_failed -> in_adjudication -> finalized, plus returned_to_author and resubmission as a new round. Role and independence guards: nobody reviews their own submission, only the assignee submits the primary review, the QA auditor is not the primary reviewer, and the adjudicator is a lead who reviewed neither side. QA passes only when the verdicts match and the scores are within a tolerance. |
 | Persistence | Typed SQLAlchemy 2 models (users, rubrics and immutable versions, submissions, assignments, reviews, gold items, audit events) with CHECK constraints, SQLite foreign keys and WAL, and an Alembic migration shipped inside the package. |
 | Audit log | Each transition runs in one transaction: a Review pinned to the submission's rubric version, the final score (primary, or adjudicated after a QA disagreement) and one audit event with `hash = sha256(prev_hash + canonical event)`. Optimistic locking rejects a stale or racing double submit. The log and rubric versions are append-only through ORM guards and database triggers, and `verify_audit_chain` names the first broken link. |
-| Review queue | Round-robin (a persisted cursor that is the last assigned reviewer id), skill-tag match (tags must cover the item's; ties by open load, then id) and load-balanced assignment with per-reviewer capacity caps. Every policy excludes the author and, for QA, the primary reviewer, and a refusal is a typed `NoEligibleReviewer` naming why each candidate was excluded. |
+| Review queue | Round-robin (a persisted cursor that is the last assigned reviewer id), skill-tag match (tags must cover the item's; ties by open load, then id) and load-balanced assignment with per-reviewer capacity caps. Every policy excludes the author and, for QA, the primary reviewer, and a refusal is a typed `NoEligibleReviewer` naming why each candidate was excluded. On the database, `QueueService.assign_next`, `sweep_overdue` and `sample_for_qa` act through the pipeline service, so every queue decision is an audited transition whose event records the policy and cursor, or the sampling reasons, draw, rate and seed. |
 | SLAs | A default turnaround (`RUBRICOPS_REVIEW_SLA_HOURS`) with per-rubric overrides; overdue detection reads an injected clock and returns an escalation list sorted by lateness. |
 | QA sampling | A seeded random rate (`RUBRICOPS_QA_SAMPLE_RATE`) plus risk rules: a new reviewer, a calibration flag, a score near the pass threshold (exact decimals) and a wide score spread on the item. Each decision records every reason, the draw and the rate; draws are keyed on seed, submission and round, so decisions do not depend on batch order. |
 | Strict loaders | YAML/JSON rubrics and scores with duplicate keys rejected; ratings CSVs in wide or long layout with repeated units, repeated (unit, rater) pairs and malformed quoting rejected, all with line numbers. |
@@ -312,6 +312,7 @@ flowchart LR
     end
     subgraph services["rubricops.services"]
         PS["PipelineService: one transaction per transition"]
+        QS["QueueService: assign_next, sweep_overdue, sample_for_qa"]
         AU["audit: hash chain, verify_audit_chain"]
     end
     subgraph db["rubricops.db (SQLAlchemy 2 + Alembic)"]
@@ -344,6 +345,8 @@ flowchart LR
     C3 --> AU
     C3 --> MG
     PS --> P
+    QS --> PS
+    QS --> Q
     PS --> S
     PS --> AU
     PS --> MO
@@ -363,9 +366,9 @@ reproduces it.
 
 | What | Result | Command |
 | --- | --- | --- |
-| Tests | 627 passed | `make cov` |
-| Coverage (line and branch) | 100% of 2470 statements and 518 branches (the gate is 85%) | `make cov` |
-| Static checks | ruff clean, `mypy --strict` clean on 35 source files | `make lint typecheck` |
+| Tests | 637 passed | `make cov` |
+| Coverage (line and branch) | 100% of 2553 statements and 530 branches (the gate is 85%) | `make cov` |
+| Static checks | ruff clean, `mypy --strict` clean on 36 source files | `make lint typecheck` |
 | End-to-end demo | 4.5-5.6 s wall time over three runs, including the queue commands and the pipeline walkthrough | `time make demo` |
 | Pipeline walkthrough | 26 audit events, head hash `f3b4e8815a25`, identical on macOS and in the image | `make demo`, `make docker-demo` |
 | Bootstrap | 20,000 resamples of interval alpha on the 20-unit example in 0.8-1.1 s, including CLI start-up (three runs) | `time uv run rubricops agreement examples/ratings/correctness-3-reviewers.csv -m alpha-interval --resamples 20000` |
@@ -395,7 +398,10 @@ properties check that round-robin shares out work within one item per reviewer a
 that load balancing never gives work to a reviewer while a lighter one is eligible.
 SLA tests run on a frozen clock (due exactly now is not late, one second later is).
 The sampler tests check that every applicable reason is recorded, that the same seed
-gives the same decisions in any order, and the binomial bounds above.
+gives the same decisions in any order, and the binomial bounds above. The queue
+service tests run on SQLite: round-robin resumes from the last assignment row, a
+per-rubric SLA sets `due_at`, a completed review leaves the overdue list, and a
+second-round review is sent to QA because the item's first-round scores disagree.
 
 ## Design decisions
 
@@ -441,10 +447,9 @@ gives the same decisions in any order, and the binomial bounds above.
 
 Planned in [PLAN.md](PLAN.md) and **not built yet**:
 
-- **Queue service wiring (rest of slice 4):** `assign_next`, `sweep_overdue` and
-  `sample_for_qa` against the database, so the pipeline service assigns, escalates
-  and routes to QA with the policies above instead of the caller choosing. Today the
-  queue commands run on scenario files.
+- **Queue commands on a live database:** `QueueService` exists and is tested on
+  SQLite, but `rubricops queue` still reads scenario files; a `--url` mode will run
+  the same commands against the database.
 - **Reviewer calibration (slice 5):** accuracy against gold items, per-criterion
   leniency and harshness with bootstrap CIs, drift alerts and reviewer scorecards.
 - **Service and UI (slice 6):** FastAPI with JWT roles, an HTMX reviewer queue and
@@ -478,7 +483,7 @@ src/rubricops/
                  queue policies, SLAs, QA sampling
   stats/         reliability data, agreement coefficients, bootstrap
   db/            SQLAlchemy models, engine and sessions, Alembic migrations
-  services/      pipeline transactions, audit hash chain, the walkthrough
+  services/      pipeline transactions, queue service, audit hash chain, the walkthrough
   cli/           Typer commands: rubric, agreement, db, pipeline, audit, queue
   loaders.py     strict YAML/JSON and ratings CSV loading
   scenario.py    queue scenario files for the queue commands
