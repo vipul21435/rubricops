@@ -40,6 +40,7 @@ from rubricops.stats.data import (
 )
 
 KappaWeights = Literal["none", "linear", "quadratic"]
+AlphaLevel = Literal["nominal", "interval"]
 RatingsLike = ReliabilityData | Sequence[Sequence[object]] | npt.NDArray[np.generic]
 
 
@@ -220,4 +221,67 @@ def fleiss_kappa(
         expected=expected,
         n_units=n,
         empty_reason="no unit has any ratings",
+    )
+
+
+def coincidence_matrix(data: ReliabilityData) -> FloatArray:
+    """Krippendorff's coincidence matrix ``o[c, k]`` over the pairable units.
+
+    Each unit with ``m_u >= 2`` ratings contributes every ordered pair of its ratings
+    from different raters, weighted ``1 / (m_u - 1)``, so every pairable rating adds
+    exactly 1 to its row. Units with fewer than two ratings contribute nothing.
+    """
+    counts = data.unit_counts()
+    per_unit = counts.sum(axis=1)
+    pairable = per_unit >= 2
+    c = counts[pairable].astype(np.float64)
+    scaled = c / (per_unit[pairable] - 1)[:, None].astype(np.float64)
+    coincidences: FloatArray = scaled.T @ c - np.diag(scaled.sum(axis=0))
+    return coincidences
+
+
+def krippendorff_alpha(
+    ratings: RatingsLike,
+    *,
+    level: AlphaLevel = "nominal",
+    categories: Sequence[object] | None = None,
+) -> AgreementResult:
+    """Krippendorff's alpha at the nominal or interval level of measurement.
+
+    Works with any number of raters, missing ratings and a different number of
+    ratings per unit. Units with fewer than two ratings are not pairable and are
+    dropped (``n_units`` counts the rest). With ``o`` the coincidence matrix,
+    ``n_c`` its row sums and ``n`` the number of pairable ratings::
+
+        D_o = sum(o[c, k] * delta2[c, k]) / n
+        D_e = sum(n_c * n_k * delta2[c, k]) / (n * (n - 1))
+
+    where ``delta2`` is 1 for different categories (nominal) or ``(c - k)^2``
+    (interval, which needs numeric ratings). Interval disagreements are therefore in
+    squared rating units; alpha itself is unit-free.
+    """
+    data = as_reliability_data(ratings, categories=categories)
+    if level == "interval":
+        values = data.scale_values()
+        delta2 = (values[:, None] - values[None, :]) ** 2
+    else:
+        delta2 = _nominal_weights(data.n_categories)
+    per_unit = (data.codes != MISSING).sum(axis=1)
+    used = data.codes[per_unit >= 2]
+    used = used[used != MISSING]
+    n = int(used.size)
+    observed = expected = 0.0
+    if n:
+        o = coincidence_matrix(data)
+        n_c = o.sum(axis=1)
+        observed = float((o * delta2).sum() / n)
+        expected = float(n_c @ delta2 @ n_c / (n * (n - 1)))
+    return _result(
+        f"alpha-{level}",
+        data,
+        used,
+        observed=observed,
+        expected=expected,
+        n_units=int((per_unit >= 2).sum()),
+        empty_reason="no unit has two or more ratings, so no rating can be paired",
     )
