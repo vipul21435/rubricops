@@ -22,7 +22,7 @@ image; the review queue, QA sampling, calibration and web service are on the
 | Versioned rubrics | Weighted criteria, integer scales, a scoring guide with one descriptor per scale point, anchor examples, gating minimums and a pass threshold. Pydantic-validated, sha256 content-hashed over a canonical form, with an append-only version registry. |
 | Rubric diff | Added and removed criteria, reweighting, rescaling, gating and threshold changes, wording edits, and a single `affects_scoring` flag usable as a CI gate. |
 | Exact scoring | A `criterion -> score` map scored against a specific rubric version with exact decimals and `fractions.Fraction`, so a score that equals the threshold on paper passes. |
-| Agreement statistics | Cohen's kappa (unweighted, linear, quadratic), Fleiss' kappa and Krippendorff's alpha (nominal, interval) in numpy, checked against published worked examples. Degenerate data returns NaN with a reason instead of raising. |
+| Agreement statistics | Cohen's kappa (unweighted, linear, quadratic), Fleiss' kappa, Gwet's AC1, Gwet's AC2 (linear, quadratic) and Krippendorff's alpha (nominal, interval) in numpy, checked against published worked examples. AC1/AC2 keep a sane value where the kappa paradox drives Cohen/Fleiss toward zero. Degenerate data returns NaN with a reason instead of raising. |
 | Bootstrap intervals | Seeded percentile bootstrap over units, with degenerate resamples skipped and counted. |
 | Strict loaders | YAML/JSON rubrics and scores with duplicate keys rejected; ratings CSVs in wide or long layout with repeated units, repeated (unit, rater) pairs and malformed quoting rejected, all with line numbers. |
 | CLI | `rubricops rubric validate\|diff\|score` and `rubricops agreement`, each with `--json`. |
@@ -131,10 +131,19 @@ alpha-nominal   0.508     16       32  [0.031, 0.878]
 The first file shows why the metric choice matters: the reviewers rarely agree on the
 exact point (nominal alpha 0.495) but their disagreements are small (interval alpha
 0.835). The second shows how wide an interval 16 items give: a kappa of 0.49 is
-compatible with anything from chance to strong agreement.
+compatible with anything from chance to strong agreement. The last example (from
+Gwet's irrCAC package) contrasts Cohen's kappa with AC1 on the same table:
+
+```console
+$ rubricops agreement examples/ratings/gwet-abstractors.csv -m ac1 -m cohen --ci 0
+examples/ratings/gwet-abstractors.csv  units=100 raters=2 categories=[AIU, Ectopic, NIU]
+metric   value  units  ratings
+ac1      0.849    100      200
+cohen    0.796    100      200
+```
 
 - `--metric` is repeatable: `cohen`, `cohen-linear`, `cohen-quadratic`, `fleiss`,
-  `alpha-nominal` (default), `alpha-interval`.
+  `ac1`, `ac2-linear`, `ac2-quadratic`, `alpha-nominal` (default), `alpha-interval`.
 - `--ci 0.9` sets the confidence level (`--ci 0` skips the bootstrap), `--resamples`
   the count and `--seed` the seed (default `RUBRICOPS_RANDOM_SEED`). The same seed
   always prints the same interval.
@@ -167,7 +176,7 @@ flowchart LR
     end
     subgraph stats["rubricops.stats (numpy)"]
         RD["ReliabilityData: encoded units x raters"]
-        AG["agreement: Cohen, Fleiss, Krippendorff"]
+        AG["agreement: Cohen, Fleiss, Gwet AC1/AC2, Krippendorff"]
         BS["bootstrap: seeded percentile CI"]
     end
     RY --> L
@@ -200,9 +209,9 @@ reproduces it.
 
 | What | Result | Command |
 | --- | --- | --- |
-| Tests | 310 passed | `make cov` |
-| Coverage (line and branch) | 100% of 1146 statements and 276 branches (the gate is 85%) | `make cov` |
-| Static checks | ruff clean, `mypy --strict` clean on 16 source files | `make lint typecheck` |
+| Tests | 537 passed | `make cov` |
+| Coverage (line and branch) | 100% of 1600 statements, 99.95% of 343 branches (the gate is 85%) | `make cov` |
+| Static checks | ruff clean, `mypy --strict` clean on 25 source files | `make lint typecheck` |
 | End-to-end demo | 1.7 s wall time | `time make demo` |
 | Bootstrap | 20,000 resamples of interval alpha on the 20-unit example in 0.8-1.1 s, including CLI start-up (three runs) | `time uv run rubricops agreement examples/ratings/correctness-3-reviewers.csv -m alpha-interval --resamples 20000` |
 | Docker image | 72 MB content size (71,996,734 bytes) | `docker image inspect rubricops:dev --format '{{.Size}}'` |

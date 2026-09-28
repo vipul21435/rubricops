@@ -1,9 +1,11 @@
 """Chance-corrected inter-rater agreement coefficients, computed with numpy.
 
 Every coefficient here has the form ``1 - D_o / D_e``: observed disagreement over
-the disagreement expected by chance. :class:`AgreementResult` reports both terms so a
-reader can see *why* a value is low (reviewers disagree) or unstable (little
-disagreement was possible in the first place).
+the disagreement expected by chance (for Gwet's AC1/AC2 the pair is re-expressed as
+``1 - p_a`` and ``1 - p_e`` from Gwet's ``(p_a - p_e) / (1 - p_e)``).
+:class:`AgreementResult` reports both terms so a reader can see *why* a value is low
+(reviewers disagree) or unstable (little disagreement was possible in the first
+place).
 
 Input is a units x raters table (see :class:`~rubricops.stats.data.ReliabilityData`);
 ``None`` or NaN marks a missing rating.
@@ -174,6 +176,82 @@ def cohen_kappa(
     )
 
 
+def gwet_agreement(
+    ratings: RatingsLike,
+    *,
+    weights: KappaWeights = "none",
+    categories: Sequence[object] | None = None,
+) -> AgreementResult:
+    """Gwet's AC1 (unweighted) or AC2 (linear/quadratic weighted) coefficient.
+
+    Gwet (2008) designed AC1 to escape the kappa paradox: Cohen's and Fleiss'
+    kappa can collapse toward zero when the categories are heavily imbalanced
+    even though raters agree almost always, because their chance term assumes
+    each rater's marginals can differ freely. AC1 replaces that chance guess with
+    ``sum_k p_k (1 - p_k)`` computed from the *overall* category proportions, so a
+    skewed but consistent panel keeps a high AC1 where kappa reports near zero.
+
+    The point estimate is ``(p_a - p_e) / (1 - p_e)``: ``p_a`` is the observed
+    agreement and ``p_e`` the chance agreement, both re-expressed in
+    ``AgreementResult`` as their disagreement complements (``1 - p_a``,
+    ``1 - p_e``) so the general ``1 - D_o / D_e`` form still holds.
+
+    ``weights="none"`` gives AC1. ``"linear"`` and ``"quadratic"`` give AC2; both
+    need numeric ratings and use the rating *values*, weighting a near miss less
+    than a far miss exactly as the weighted kappa weights do. Units with fewer
+    than two ratings cannot enter ``p_a`` but still shape ``p_e``.
+    """
+    data = as_reliability_data(ratings, categories=categories)
+    q = data.n_categories
+    counts = data.unit_counts()
+    ri = counts.sum(axis=1)
+    pairable = ri >= 2
+    n2more = int(pairable.sum())
+
+    # Agreement weight matrix w[i, j]: 1 on the diagonal, a fall-off off it.
+    if weights == "none":
+        w = np.eye(q)
+        w_sum = float(q)
+    else:
+        values = data.scale_values()
+        span = float(values.max() - values.min())
+        if span <= 0.0:
+            msg = "weighted AC2 needs categories with a non-zero numeric span"
+            raise AgreementInputError(msg)
+        distance = np.abs(values[:, None] - values[None, :])
+        w = 1.0 - (distance / span) ** 2 if weights == "quadratic" else 1.0 - distance / span
+        w_sum = float(w.sum())
+
+    # p_a: mean over pairable units of the (weighted) agreeing-rater-pair share.
+    # For weighted AC2 the weights enter through agree.mat %*% weights (irrCAC's
+    # agree.mat.w): a unit still contributes, but a near miss on L_k is worth
+    # w[k, l] of a full agreement.
+    c = counts[pairable].astype(np.float64)
+    ri_c = ri[pairable].astype(np.float64)
+    agree_w = c @ w
+    num = (c * (agree_w - 1)).sum(axis=1)
+    den = ri_c * (ri_c - 1)
+    pa = float((num / den).mean()) if n2more else 0.0
+
+    # Chance agreement from overall proportions p_k (units with one rating count).
+    rated = ri > 0
+    pi_row = counts[rated] / ri[rated, None].astype(np.float64)
+    p_k = pi_row.mean(axis=0)
+    pe = (w_sum * (p_k * (1.0 - p_k)).sum() / (q * (q - 1))) if q >= 2 else 1e-15
+
+    used = data.codes[pairable]
+    used = used[used != MISSING]
+    return _result(
+        "ac1" if weights == "none" else f"ac2-{weights}",
+        data,
+        used,
+        observed=1.0 - pa,
+        expected=1.0 - pe,
+        n_units=n2more,
+        empty_reason="no unit has two or more ratings, so no rating can be paired",
+    )
+
+
 def fleiss_kappa(
     ratings: RatingsLike, *, categories: Sequence[object] | None = None
 ) -> AgreementResult:
@@ -308,6 +386,18 @@ def _alpha_interval(data: ReliabilityData) -> AgreementResult:
     return krippendorff_alpha(data, level="interval")
 
 
+def _ac1(data: ReliabilityData) -> AgreementResult:
+    return gwet_agreement(data)
+
+
+def _ac2_linear(data: ReliabilityData) -> AgreementResult:
+    return gwet_agreement(data, weights="linear")
+
+
+def _ac2_quadratic(data: ReliabilityData) -> AgreementResult:
+    return gwet_agreement(data, weights="quadratic")
+
+
 def _fleiss(data: ReliabilityData) -> AgreementResult:
     return fleiss_kappa(data)
 
@@ -320,6 +410,9 @@ METRICS: Mapping[str, Callable[[ReliabilityData], AgreementResult]] = MappingPro
         "fleiss": _fleiss,
         "alpha-nominal": _alpha_nominal,
         "alpha-interval": _alpha_interval,
+        "ac1": _ac1,
+        "ac2-linear": _ac2_linear,
+        "ac2-quadratic": _ac2_quadratic,
     }
 )
 """Every coefficient by the name it reports in ``AgreementResult.metric``."""

@@ -24,4 +24,8 @@ step agreement "$EX/ratings/correctness-3-reviewers.csv" \
     --metric alpha-interval --metric alpha-nominal
 step agreement "$EX/ratings/verdicts-long.csv" --layout long \
     --metric cohen --metric alpha-nominal
+step agreement "$EX/ratings/gwet-abstractors.csv" \
+    --metric ac1 --metric cohen
+step agreement "$EX/ratings/correctness-3-reviewers.csv" \
+    --metric ac2-quadratic --metric alpha-interval
 printf '\ndemo finished\n'
