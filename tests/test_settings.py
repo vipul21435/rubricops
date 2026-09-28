@@ -15,9 +15,7 @@ def test_defaults_are_local_and_safe() -> None:
 
 
 def test_env_vars_override_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        "RUBRICOPS_DATABASE_URL", "postgresql+psycopg://u:p@db/rubricops"
-    )
+    monkeypatch.setenv("RUBRICOPS_DATABASE_URL", "postgresql+psycopg://u:p@db/rubricops")
     monkeypatch.setenv("RUBRICOPS_QA_SAMPLE_RATE", "0.25")
     settings = get_settings()
     assert settings.database_url == "postgresql+psycopg://u:p@db/rubricops"
@@ -29,9 +27,7 @@ def test_secret_is_masked_in_dumps() -> None:
 
 
 @pytest.mark.parametrize("rate", ["-0.1", "1.5"])
-def test_rejects_out_of_range_sample_rate(
-    monkeypatch: pytest.MonkeyPatch, rate: str
-) -> None:
+def test_rejects_out_of_range_sample_rate(monkeypatch: pytest.MonkeyPatch, rate: str) -> None:
     monkeypatch.setenv("RUBRICOPS_QA_SAMPLE_RATE", rate)
     with pytest.raises(ValidationError):
         Settings()

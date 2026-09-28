@@ -44,3 +44,64 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.9",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N", "PT", "RET", "PL", "S", "TID", "PTH",
+    "DTZ", "ERA",
+]
+ignore = [
+    "PLR0913", # service and API functions legitimately take many keyword arguments
+    "PLR2004", # comparisons against spec constants (scale bounds, thresholds) are clearer inline
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "PLR2004"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+warn_unreachable = true
+pretty = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "slow: tests that take more than a second (bootstrap, large simulations)",
+    "postgres: tests that need a Postgres server (RUBRICOPS_TEST_POSTGRES_URL)",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["rubricops"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 85
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
