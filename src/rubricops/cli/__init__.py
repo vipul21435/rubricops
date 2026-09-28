@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from rubricops import __version__
+from rubricops.cli.rubric import rubric_app
 from rubricops.settings import get_settings
 
 app = typer.Typer(
@@ -15,6 +16,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+app.add_typer(rubric_app, name="rubric")
 
 
 def _version_callback(value: bool) -> None:

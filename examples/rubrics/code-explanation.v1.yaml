@@ -1,0 +1,105 @@
+# First version of the code-explanation rubric, kept to demonstrate
+# `rubricops rubric diff`. The current version is code-explanation.yaml.
+id: code-explanation
+title: Explaining a code snippet to a learner
+description: |
+  Grades a model's explanation of a short Python function, written for a learner
+  who knows basic Python. Every anchor example refers to this snippet:
+
+      def chunk(items, size):
+          return [items[i:i + size] for i in range(0, len(items), size)]
+pass_threshold: 0.6
+criteria:
+  - id: correctness
+    title: Technical correctness
+    weight: 0.5
+    scale: {low: 1, high: 4}
+    guide:
+      - score: 1
+        label: Wrong
+        descriptor: The core behaviour is described incorrectly.
+      - score: 2
+        label: Flawed
+        descriptor: >-
+          The main idea is right, but at least one claim the learner would act on
+          is false.
+      - score: 3
+        label: Sound
+        descriptor: Every claim is true; any imprecision is minor and does not mislead.
+      - score: 4
+        label: Precise
+        descriptor: >-
+          Every claim is true and stated precisely, including how the code behaves
+          on edge cases.
+    anchors:
+      - score: 1
+        text: Says chunk() splits the list into `size` equal parts.
+        rationale: It produces parts of length `size`, not `size` parts.
+      - score: 2
+        text: >-
+          Says chunk() returns pieces of length `size` and pads the last piece with
+          None.
+        rationale: Nothing is padded; the last piece is simply shorter.
+      - score: 3
+        text: >-
+          Says chunk() returns consecutive slices of length `size`, the last one
+          possibly shorter.
+        rationale: All true, but silent on sizes of zero or below.
+      - score: 4
+        text: >-
+          Explains the slices and the shorter tail, and notes that size=0 raises
+          ValueError from range() while a negative size returns an empty list.
+        rationale: Complete and exact, including both invalid-size behaviours.
+
+  - id: completeness
+    title: Coverage of inputs, output and edge cases
+    weight: 0.3
+    scale: {low: 1, high: 4}
+    guide:
+      - score: 1
+        label: Restates
+        descriptor: Restates the function name without explaining what it does.
+      - score: 2
+        label: Partial
+        descriptor: Explains the return value but skips what happens to leftover items.
+      - score: 3
+        label: Mostly complete
+        descriptor: >-
+          Covers the return value and the shorter last chunk, but not empty input or
+          invalid sizes.
+      - score: 4
+        label: Complete
+        descriptor: Covers the return value, the shorter last chunk, empty input and invalid sizes.
+    anchors:
+      - score: 1
+        text: '"It chunks the items."'
+      - score: 2
+        text: '"It returns a list of lists, each holding `size` items."'
+      - score: 3
+        text: Shows chunk([1, 2, 3, 4, 5], 2) -> [[1, 2], [3, 4], [5]] and stops there.
+      - score: 4
+        text: Adds that chunk([], 3) is [] and that size must be positive.
+
+  - id: clarity
+    title: Clarity for the stated audience
+    weight: 0.2
+    scale: {low: 1, high: 3}
+    guide:
+      - score: 1
+        label: Opaque
+        descriptor: Dense and jargon-heavy; a learner could not follow it.
+      - score: 2
+        label: Followable
+        descriptor: Followable with effort; order or terminology gets in the way.
+      - score: 3
+        label: Clear
+        descriptor: Easy to follow, with terms explained on first use.
+    anchors:
+      - score: 1
+        text: >-
+          One paragraph that uses "comprehension", "stride" and "slice" without
+          defining any of them.
+      - score: 2
+        text: Walks through an example, but "stride" is never defined.
+      - score: 3
+        text: One-sentence summary, then a worked example, with every term explained.

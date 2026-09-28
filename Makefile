@@ -29,9 +29,14 @@ cov: ## Run tests with branch coverage (fails under 85%)
 
 check: lint typecheck cov ## Everything CI runs
 
+RUBRICS := examples/rubrics
+
 demo: ## End-to-end demo (grows with each slice; see PLAN.md)
 	$(UV) run rubricops --version
-	$(UV) run rubricops config
+	$(UV) run rubricops rubric validate $(RUBRICS)/*.yaml
+	$(UV) run rubricops rubric diff $(RUBRICS)/code-explanation.v1.yaml $(RUBRICS)/code-explanation.yaml
+	$(UV) run rubricops rubric score $(RUBRICS)/code-explanation.yaml \
+		--scores examples/reviews/code-explanation-review.yaml
 
 clean: ## Remove caches and build output
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage coverage.xml htmlcov dist build

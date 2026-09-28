@@ -66,7 +66,33 @@ inter-rater agreement. Every rubric, dataset and example in this repo is origina
 
 ## Slices
 
-### Slice 1: Versioned rubrics and scoring engine
+### Slice 1: Versioned rubrics and scoring engine [x] done
+
+Decisions made while building it:
+- Weights are fractions of the total and must sum to 1 as written (tolerance 1e-9).
+  Each float is read back as the shortest decimal that round-trips it, so
+  `0.7 + 0.2 + 0.1` sums to exactly 1 even though it does not in binary floating
+  point.
+- Scoring uses the same exact decimals and `fractions.Fraction`, so a score equal
+  to the threshold on paper passes. Floats appear only in reported values.
+- A scale has at most 11 points (0..10), because every point needs a descriptor and
+  an anchor. A `gating` minimum at the bottom of the scale is rejected, since it
+  could never fail.
+- Anchors live in a per-criterion list with an explicit `score`, rather than nested
+  under guide levels, so "anchor outside the scale" is a real, checkable error.
+- Canonical form: text is trimmed, guide levels are sorted by score, and anchors are
+  stably sorted by score. Criterion order is kept, because it is the order a review
+  form shows, so reordering criteria is a new version and the diff reports it.
+- Publishing a document identical to the head raises `UnchangedRubricError`. A revert
+  is a new version that shares an older hash (`find_by_hash` returns both).
+- The diff reports a rescaled criterion only under `rescaled`, not also as a guide
+  edit. `affects_scoring` is true for added or removed criteria, weight, scale,
+  gating and threshold changes, and false for wording, anchor and order changes.
+- The YAML and JSON loaders reject duplicate keys (YAML merge-key overrides are still
+  allowed). CLI exit codes are 0 for success, 1 for invalid input or a gated diff,
+  and 2 for usage errors.
+- The `Clock` protocol (`SystemClock`, `FrozenClock`) landed here because the
+  registry timestamps versions.
 
 Goal: model rubrics as validated, immutable, versioned documents and score reviews
 against them.

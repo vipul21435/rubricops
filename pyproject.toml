@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "pyyaml>=6.0.2",
     "typer>=0.12",
 ]
 
@@ -44,6 +45,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.9",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.ruff]

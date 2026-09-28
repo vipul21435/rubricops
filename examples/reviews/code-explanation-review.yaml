@@ -1,0 +1,5 @@
+# One reviewer's scores for one model response, graded with code-explanation.yaml.
+correctness: 3
+completeness: 3
+clarity: 4
+safe_advice: 1

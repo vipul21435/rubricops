@@ -1,0 +1,122 @@
+id: action-items
+title: Extracting action items from a meeting transcript
+description: |
+  Grades a model that turns a meeting transcript into a JSON list of action items,
+  each with "owner", "task" and "due" (null when no date was agreed). Every anchor
+  example refers to this excerpt, which contains exactly three action items:
+
+      Priya: I'll send the revised budget to finance by Friday.
+      Tomas: Can someone book the room for the demo?
+      Mei:   I can, once we pick a date.
+      Priya: Also, Tomas owns the release notes.
+pass_threshold: 0.75
+criteria:
+  - id: field_accuracy
+    title: Owner, task and due date are right
+    weight: 0.45
+    scale: {low: 0, high: 3}
+    gating: 2
+    guide:
+      - score: 0
+        label: Mostly wrong
+        descriptor: Most extracted items have the wrong owner or the wrong task.
+      - score: 1
+        label: Some right
+        descriptor: At least one item is fully right, but several fields are wrong.
+      - score: 2
+        label: Nearly right
+        descriptor: Every owner and task is right; at most one due date is wrong.
+      - score: 3
+        label: Exact
+        descriptor: Every owner, task and due date matches the transcript.
+    anchors:
+      - score: 0
+        text: Assigns the budget to Tomas and the room booking to Priya.
+      - score: 1
+        text: >-
+          The budget item is right, but the room booking goes to Tomas and the
+          release notes are due Friday.
+      - score: 2
+        text: All owners and tasks are right, but the release notes are given a Friday due date.
+        rationale: One due date is invented from a neighbouring line.
+      - score: 3
+        text: >-
+          Priya / send revised budget to finance / Friday; Mei / book the demo room /
+          null; Tomas / release notes / null.
+
+  - id: recall
+    title: Every action item is found
+    weight: 0.25
+    scale: {low: 0, high: 3}
+    guide:
+      - score: 0
+        label: None found
+        descriptor: Finds no action items, or only summarises the discussion.
+      - score: 1
+        label: Few
+        descriptor: Finds about a third of the action items.
+      - score: 2
+        label: Most
+        descriptor: Finds about two thirds of the action items.
+      - score: 3
+        label: All
+        descriptor: Finds every action item.
+    anchors:
+      - score: 0
+        text: Returns an empty list.
+      - score: 0
+        text: Returns a one-line summary of the meeting instead of items.
+      - score: 1
+        text: Lists only the budget item.
+      - score: 2
+        text: Lists the budget and room items but misses the release notes.
+        rationale: Ownership stated in passing ("Tomas owns ...") is still an action item.
+      - score: 3
+        text: Lists all three items.
+
+  - id: grounding
+    title: Nothing is invented
+    weight: 0.2
+    scale: {low: 0, high: 2}
+    gating: 2
+    guide:
+      - score: 0
+        label: Invents
+        descriptor: Adds an item, owner or date that the transcript does not support.
+      - score: 1
+        label: Unmarked inference
+        descriptor: Infers a detail from context without saying it is inferred.
+      - score: 2
+        label: Grounded
+        descriptor: Every field traces to the transcript, and inferences are marked.
+    anchors:
+      - score: 0
+        text: Adds "Tomas to schedule the demo for Monday".
+        rationale: Nobody said this.
+      - score: 1
+        text: Gives the room booking a Friday due date, borrowed from the budget line.
+      - score: 2
+        text: >-
+          Leaves the room booking's due date null and adds the note "after the demo
+          date is chosen".
+
+  - id: schema_validity
+    title: Output matches the schema
+    weight: 0.1
+    scale: {low: 0, high: 1}
+    guide:
+      - score: 0
+        label: Invalid
+        descriptor: Not valid JSON, or an item is missing a required key.
+      - score: 1
+        label: Valid
+        descriptor: Valid JSON; every item has exactly owner, task and due.
+    anchors:
+      - score: 0
+        text: Returns a Markdown bullet list instead of JSON.
+      - score: 0
+        text: Returns JSON, but the room-booking item has no "due" key at all.
+      - score: 1
+        text: >-
+          [{"owner": "Priya", "task": "Send revised budget to finance", "due":
+          "Friday"}, ...]

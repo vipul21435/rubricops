@@ -76,12 +76,13 @@ def test_canonical_form_and_hash_are_pinned() -> None:
 
 def test_canonical_json_is_compact_sorted_and_ascii() -> None:
     data = rubric_dict()
-    data["description"] = "Grades résumé feedback"
+    e_acute = "\N{LATIN SMALL LETTER E WITH ACUTE}"
+    data["description"] = f"Grades r{e_acute}sum{e_acute}"
     text = canonical_json(Rubric.model_validate(data))
     assert text.isascii()
-    assert "\\u00e9" in text
+    assert '"description":"Grades r\\u00e9sum\\u00e9"' in text
     assert ": " not in text
-    assert ", " not in text.replace("r\\u00e9sum\\u00e9", "")
+    assert ", " not in text
     parsed = json.loads(text)
     assert list(parsed) == sorted(parsed)
     assert json.dumps(parsed, sort_keys=True, separators=(",", ":")) == text
