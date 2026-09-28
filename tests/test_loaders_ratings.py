@@ -58,7 +58,7 @@ def test_wide_layout(tmp_path: Path) -> None:
 
 def test_wide_layout_strips_a_utf8_bom_and_whitespace(tmp_path: Path) -> None:
     path = tmp_path / "bom.csv"
-    path.write_bytes("﻿item , ana\r\n q1 , 2\r\n".encode())
+    path.write_bytes(b"\xef\xbb\xbfitem , ana\r\n q1 , 2\r\n")
     table = load_ratings(path)
     assert (table.units, table.raters, table.rows) == (("q1",), ("ana",), ((2,),))
 
