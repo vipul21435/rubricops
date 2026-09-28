@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from rubricops.db.models import AuditEvent
 from rubricops.domain.clock import FrozenClock
-from rubricops.domain.pipeline import Action, Status
+from rubricops.domain.pipeline import Action, Forbidden, Status
 from rubricops.domain.queue import LoadBalanced, NoEligibleReviewer, RoundRobin, SkillTagMatch
 from rubricops.domain.sampling import QaSampler, Reason, SamplingRules
 from rubricops.domain.sla import SlaPolicy
@@ -242,3 +242,53 @@ def test_sampling_refuses_items_that_are_not_reviewed(world: World) -> None:
         queue.sample_for_qa(sid, actor_id=world.lead1)
     with pytest.raises(NotFoundError):
         queue.sample_for_qa(999, actor_id=world.lead1)
+
+
+# -- review regressions -----------------------------------------------------------
+
+
+def test_an_unassignable_item_does_not_block_the_rest_of_the_queue(world: World) -> None:
+    queue = _queue(world)
+    rust = _submit(world, ("rust",))  # nobody has rust, and it is the oldest item
+    python = [_submit(world, ("python",)) for _ in range(3)]
+    picked = []
+    for _ in python:
+        outcome = queue.assign_next(SkillTagMatch(), actor_id=world.lead1)
+        assert outcome is not None
+        picked.append(outcome.submission_id)
+    assert picked == python
+    assert world.service.get_submission(rust).status == Status.QUEUED.value
+    # Only the refused item is left: its refusal is raised, and it stays queued.
+    with pytest.raises(NoEligibleReviewer) as info:
+        queue.assign_next(SkillTagMatch(), actor_id=world.lead1)
+    assert info.value.item.submission_id == rust
+    assert world.service.get_submission(rust).status == Status.QUEUED.value
+
+
+def test_a_failed_assignment_does_not_move_the_round_robin_cursor(world: World) -> None:
+    queue = _queue(world)
+    sid = _submit(world)
+    rr = RoundRobin()
+    with pytest.raises(Forbidden):
+        queue.assign_next(rr, actor_id=world.reviewer2)  # only a lead may assign
+    assert rr.cursor is None  # nothing in the assignments table yet
+    outcome = queue.assign_next(rr, actor_id=world.lead1)
+    assert outcome is not None
+    assert (outcome.submission_id, outcome.reviewer_id) == (sid, world.reviewer1)
+    assert rr.cursor == world.reviewer1
+
+
+def test_new_reviewer_counts_only_reviews_written_before_the_sampled_one(world: World) -> None:
+    sids = [_reviewed(world, HIGH) for _ in range(3)]
+    queue = _queue(world, min_reviews=2)
+    # A batched sweep after all three reviews gives the same answers as sampling
+    # each review as soon as it is written.
+    decisions = [queue.sample_for_qa(sid, actor_id=world.lead1) for sid in sids]
+    assert [d.reasons for d in decisions] == [
+        (Reason.NEW_REVIEWER,),
+        (Reason.NEW_REVIEWER,),
+        (),
+    ]
+    context = _last_context(world)["qa_sampling"]
+    assert isinstance(context, dict)
+    assert context["reviewer_completed_reviews"] == 2  # recorded even when the rule is quiet

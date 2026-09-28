@@ -30,7 +30,13 @@ from rubricops.db.models import Assignment, Review, Submission, User
 from rubricops.db.models import RubricVersion as RubricVersionRow
 from rubricops.domain.clock import Clock
 from rubricops.domain.pipeline import Action, Role, Stage, Status
-from rubricops.domain.queue import AssignmentPolicy, QueueItem, Reviewer, RoundRobin
+from rubricops.domain.queue import (
+    AssignmentPolicy,
+    NoEligibleReviewer,
+    QueueItem,
+    Reviewer,
+    RoundRobin,
+)
 from rubricops.domain.rubric import Rubric
 from rubricops.domain.sampling import QaSampler, SampleCandidate, SampleDecision
 from rubricops.domain.sla import OpenAssignment, Overdue, SlaPolicy, find_overdue
@@ -76,24 +82,23 @@ class QueueService:
     # -- assignment -------------------------------------------------------------
 
     def assign_next(self, policy: AssignmentPolicy, *, actor_id: int) -> AssignOutcome | None:
-        """Assign the oldest queued submission; None when the queue is empty.
+        """Assign the oldest queued submission somebody can take; None when the queue is empty.
 
-        Raises :class:`~rubricops.domain.queue.NoEligibleReviewer` when nobody can
-        take it; the item stays queued.
+        Items are tried oldest first, and an item the policy refuses is skipped, so one
+        item nobody can take does not block the rest of the queue. When the policy
+        refuses every queued item, the oldest item's
+        :class:`~rubricops.domain.queue.NoEligibleReviewer` is raised and all items
+        stay queued. A :class:`RoundRobin` cursor only moves once the assignment is
+        written: if the pipeline refuses it, the cursor is put back.
         """
         with session_scope(self._sessions) as session:
-            submission = session.scalars(
+            queued = session.scalars(
                 select(Submission)
                 .where(Submission.status == Status.QUEUED.value)
                 .order_by(Submission.created_at, Submission.id)
-                .limit(1)
-            ).first()
-            if submission is None:
+            ).all()
+            if not queued:
                 return None
-            item = QueueItem(
-                submission.id, submission.author_id, Stage.PRIMARY, frozenset(submission.skill_tags)
-            )
-            version = submission.version
             reviewers = self._reviewers(session)
             if isinstance(policy, RoundRobin) and policy.cursor is None:
                 policy.cursor = session.scalars(
@@ -103,18 +108,39 @@ class QueueService:
                     .limit(1)
                 ).first()
             cursor = policy.cursor if isinstance(policy, RoundRobin) else None
-            chosen = policy.choose(item, reviewers)
+            refusals: list[NoEligibleReviewer] = []
+            for submission in queued:
+                item = QueueItem(
+                    submission.id,
+                    submission.author_id,
+                    Stage.PRIMARY,
+                    frozenset(submission.skill_tags),
+                )
+                try:
+                    chosen = policy.choose(item, reviewers)
+                except NoEligibleReviewer as exc:
+                    refusals.append(exc)
+                    continue
+                version = submission.version
+                break
+            else:
+                raise refusals[0]  # every queued item was refused: report the oldest
         context: dict[str, object] = {"policy": policy.name}
         if cursor is not None:
             context["cursor"] = cursor
-        self._pipeline.apply(
-            item.submission_id,
-            Action.ASSIGN,
-            actor_id=actor_id,
-            expected_version=version,
-            assignee_id=chosen.id,
-            context=context,
-        )
+        try:
+            self._pipeline.apply(
+                item.submission_id,
+                Action.ASSIGN,
+                actor_id=actor_id,
+                expected_version=version,
+                assignee_id=chosen.id,
+                context=context,
+            )
+        except Exception:
+            if isinstance(policy, RoundRobin):
+                policy.cursor = cursor  # nothing was assigned, so a retry picks the same one
+            raise
         with session_scope(self._sessions) as session:
             due_at = session.scalars(
                 select(Assignment.due_at)
@@ -187,7 +213,7 @@ class QueueService:
                 .where(
                     Review.reviewer_id == primary.reviewer_id,
                     Review.stage == Stage.PRIMARY.value,
-                    Review.id != primary.id,
+                    Review.id < primary.id,  # only reviews written before this one
                 )
             )
             body = session.get_one(RubricVersionRow, submission.rubric_version_id).body
@@ -216,6 +242,7 @@ class QueueService:
                     "draw": decision.draw,
                     "rate": decision.rate,
                     "seed": self._sampler.seed,
+                    "reviewer_completed_reviews": candidate.reviewer_completed_reviews,
                 }
             },
         )
