@@ -1,0 +1,46 @@
+[project]
+name = "rubricops"
+version = "0.1.0"
+description = "Expert review and rubric-grading operations: versioned rubrics, review queues, QA audit and adjudication, reviewer calibration and inter-rater agreement."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Vipul Raj Jha" }]
+requires-python = ">=3.12,<3.13"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "typer>=0.12",
+]
+
+[project.scripts]
+rubricops = "rubricops.cli:app"
+
+[project.urls]
+Repository = "https://github.com/vipul21435/rubricops"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rubricops"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.9",
+]
