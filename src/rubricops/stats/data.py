@@ -120,6 +120,36 @@ class ReliabilityData:
         return cls(codes=codes, categories=ordered, _values=values)
 
     @classmethod
+    def from_counts(
+        cls,
+        counts: Sequence[Sequence[int]] | IntArray,
+        *,
+        categories: Sequence[object] | None = None,
+    ) -> ReliabilityData:
+        """Expand a units x categories count table (the layout Fleiss' kappa is often
+        published in) into ratings. Rater columns are anonymous; a unit with fewer
+        ratings than the widest one is padded with missing entries.
+
+        ``categories`` names the columns; by default they are ``0 .. k-1``.
+        """
+        table = np.asarray(counts)
+        if table.ndim != 2 or not np.issubdtype(table.dtype, np.integer) or (table < 0).any():
+            msg = "counts must be a units x categories table of non-negative integers"
+            raise AgreementInputError(msg)
+        names = list(range(table.shape[1])) if categories is None else list(categories)
+        if len(names) != table.shape[1]:
+            msg = f"got {len(names)} category names for {table.shape[1]} count columns"
+            raise AgreementInputError(msg)
+        width = int(table.sum(axis=1).max()) if table.size else 0
+        rows: list[list[object]] = []
+        for unit in table:
+            ratings: list[object] = [
+                name for name, n in zip(names, unit.tolist(), strict=True) for _ in range(n)
+            ]
+            rows.append(ratings + [None] * (width - len(ratings)))
+        return cls.from_rows(rows, categories=names)
+
+    @classmethod
     def from_columns(
         cls,
         *columns: Sequence[object],

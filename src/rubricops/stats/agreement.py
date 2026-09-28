@@ -170,3 +170,54 @@ def cohen_kappa(
         n_units=n,
         empty_reason="no unit has a rating from both raters",
     )
+
+
+def fleiss_kappa(
+    ratings: RatingsLike, *, categories: Sequence[object] | None = None
+) -> AgreementResult:
+    """Fleiss' kappa for units that each carry the same number ``m >= 2`` of ratings.
+
+    Which raters gave the ratings does not matter (Fleiss' design lets every unit
+    have a different set of raters), so missing cells are fine as long as each unit
+    ends up with ``m`` ratings. Units with no ratings at all are ignored. Any other
+    unevenness raises :class:`AgreementInputError`; Krippendorff's alpha is the
+    statistic for varying numbers of ratings.
+
+    With two raters per unit this is Scott's pi.
+    """
+    data = as_reliability_data(ratings, categories=categories)
+    counts = data.unit_counts()
+    per_unit = counts.sum(axis=1)
+    rated = per_unit > 0
+    sizes = sorted({int(m) for m in per_unit[rated]})
+    if len(sizes) > 1:
+        msg = (
+            f"Fleiss' kappa needs the same number of ratings on every unit; found {sizes}. "
+            "Use Krippendorff's alpha for missing or uneven ratings"
+        )
+        raise AgreementInputError(msg)
+    if sizes == [1]:
+        msg = "Fleiss' kappa needs at least two ratings per unit; every unit has one"
+        raise AgreementInputError(msg)
+    counts = counts[rated]
+    used = data.codes[rated]
+    used = used[used != MISSING]
+    n = int(counts.shape[0])
+    observed = expected = 0.0
+    if n:
+        m = sizes[0]
+        w = _nominal_weights(data.n_categories)
+        # Per unit: the share of ordered rating pairs that disagree.
+        per_unit_disagreement = np.einsum("uj,jk,uk->u", counts, w, counts) / (m * (m - 1))
+        observed = float(per_unit_disagreement.mean())
+        p = counts.sum(axis=0) / (n * m)
+        expected = float(p @ w @ p)
+    return _result(
+        "fleiss",
+        data,
+        used,
+        observed=observed,
+        expected=expected,
+        n_units=n,
+        empty_reason="no unit has any ratings",
+    )
