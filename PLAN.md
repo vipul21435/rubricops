@@ -346,6 +346,16 @@ Tests:
 - the sampling rate falls within binomial bounds for a fixed seed
 - the same seed gives the same decisions
 
+Review fixes (2026-09-29), each with a regression test:
+- `assign_next` skips queued items the policy refuses, so one item nobody can take
+  no longer blocks the queue; it raises the oldest refusal only when nothing fits
+- a refused pipeline write puts the round-robin cursor back, so a retry is fair
+- the new-reviewer rule counts only reviews written before the sampled one, and
+  the audit context records that count
+- scenario files reject non-finite, non-positive or overflowing SLA hours,
+  out-of-range `item_scores` and repeated (submission, round) reviews
+- `queue sample` names each round's own reviewer
+
 ### Slice 5: Reviewer calibration and scorecards [x] done
 
 Done: `rubricops.domain.calibration` (gold accuracy, bias with bootstrap CIs, drift,
