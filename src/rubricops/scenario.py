@@ -9,6 +9,7 @@ review's reviewer) must name a listed reviewer.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import Self
 
@@ -136,8 +137,10 @@ class Scenario(_Strict):
             for a in self.assignments
         ]
 
-    def sample_candidates(self) -> list[SampleCandidate]:
+    def sample_candidates(self, flagged_handles: Collection[str] = ()) -> list[SampleCandidate]:
+        """One candidate per review; ``flagged_handles`` adds calibration flags."""
         by_id = {r.id: r for r in self.reviewers}
+        flagged = set(flagged_handles)
         return [
             SampleCandidate(
                 submission_id=r.submission,
@@ -147,7 +150,7 @@ class Scenario(_Strict):
                 reviewer_completed_reviews=by_id[r.reviewer].completed_reviews,
                 round=r.round,
                 item_scores=tuple(r.item_scores),
-                reviewer_flagged=by_id[r.reviewer].flagged,
+                reviewer_flagged=by_id[r.reviewer].flagged or by_id[r.reviewer].handle in flagged,
             )
             for r in self.reviews
         ]

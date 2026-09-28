@@ -8,6 +8,7 @@ import typer
 
 from rubricops import __version__
 from rubricops.cli.agreement import agreement
+from rubricops.cli.calibration import calibration_app
 from rubricops.cli.db import db_app
 from rubricops.cli.pipeline import audit_app, pipeline_app
 from rubricops.cli.queue import queue_app
@@ -25,6 +26,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(audit_app, name="audit")
 app.add_typer(queue_app, name="queue")
+app.add_typer(calibration_app, name="calibration")
 app.command("agreement")(agreement)
 
 

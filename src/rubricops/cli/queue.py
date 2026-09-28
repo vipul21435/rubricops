@@ -6,6 +6,7 @@ invalid scenario, 2 usage error.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -132,6 +133,20 @@ def overdue(
         )
 
 
+def _calibration_flags(path: Path) -> list[str]:
+    """The flagged reviewer handles in a calibration report written as JSON."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        typer.echo(f"error: {path}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    flagged = data.get("flagged") if isinstance(data, dict) else None
+    if not isinstance(flagged, list) or not all(isinstance(h, str) for h in flagged):
+        typer.echo(f"error: {path}: expected a calibration report with a 'flagged' list", err=True)
+        raise typer.Exit(code=1)
+    return flagged
+
+
 @queue_app.command("sample")
 def sample(
     scenario_path: ScenarioArg,
@@ -156,9 +171,14 @@ def sample(
         float,
         typer.Option("--max-spread", min=0.0, max=1.0, help="Widest acceptable score spread."),
     ] = 0.25,
+    flags_path: Annotated[
+        Path | None,
+        typer.Option("--flags", help="JSON from 'calibration report --format json'."),
+    ] = None,
 ) -> None:
     """Decide which primary reviews go to QA, with the reasons for each decision."""
     scenario = _load(scenario_path)
+    flagged = _calibration_flags(flags_path) if flags_path is not None else []
     settings = get_settings()
     rules = SamplingRules(
         rate=settings.qa_sample_rate if rate is None else rate,
@@ -167,7 +187,7 @@ def sample(
         max_score_spread=max_spread,
     )
     sampler = QaSampler(rules, settings.random_seed if seed is None else seed)
-    decisions = sampler.decide_all(scenario.sample_candidates())
+    decisions = sampler.decide_all(scenario.sample_candidates(flagged))
     handles = scenario.handles()
     reviewer_of = {r.submission: r.reviewer for r in scenario.reviews}
     sampled = sum(d.sampled for d in decisions)
