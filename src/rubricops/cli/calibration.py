@@ -175,6 +175,8 @@ def report(
     seed: Annotated[int, typer.Option("--seed")] = 7,
 ) -> None:
     """Accuracy, bias with bootstrap CIs, drift and peer agreement per reviewer."""
+    if not math.isfinite(drift_threshold):
+        raise typer.BadParameter("must be a finite number", param_hint="--drift-threshold")
     try:
         rubric = load_rubric(rubric_path)
         gold = _read(gold_path, _GoldFile)

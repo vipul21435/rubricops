@@ -165,7 +165,13 @@ def test_signed_error_ci_and_classification() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"window": 0}, {"drift_threshold": -1.0}, {"min_verdict_agreement": 1.5}],
+    [
+        {"window": 0},
+        {"drift_threshold": -1.0},
+        {"drift_threshold": float("nan")},
+        {"drift_threshold": float("inf")},
+        {"min_verdict_agreement": 1.5},
+    ],
 )
 def test_rules_are_validated(kwargs: dict[str, float]) -> None:
     with pytest.raises(ValueError, match="must be"):
@@ -178,3 +184,18 @@ def test_reviewers_with_no_shared_items_have_no_peer_agreement() -> None:
     report = calibrate(RUBRIC, gold, reviews, RULES)
     assert report.scorecard("a").peers == ()
     assert report.scorecard("b").peers == ()
+
+
+def test_naive_and_aware_timestamps_mix_with_naive_read_as_utc() -> None:
+    gold = _gold(20)
+    steady = _reviews("a", gold, later_offset=1)
+    mixed = [
+        GoldReview(r.reviewer, r.item_id, r.scores, r.reviewed_at.replace(tzinfo=None))
+        if i % 2
+        else r
+        for i, r in enumerate(steady)
+    ]
+    report = calibrate(RUBRIC, gold, mixed, RULES)
+    aware = calibrate(RUBRIC, gold, steady, RULES)
+    assert report.scorecard("a").drift == aware.scorecard("a").drift
+    assert report.scorecard("a").drift is not None

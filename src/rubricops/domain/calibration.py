@@ -12,8 +12,8 @@ who grades a gold item (blind, as if it were a normal item) produces a
   It is ``lenient`` only when the whole interval is above 0, ``harsh`` only when it
   is below 0, and ``neutral`` otherwise, so a few noisy reviews never label anyone;
 - **drift**: the mean absolute error of the most recent window of gold reviews
-  against the window before it; a rise of more than ``drift_threshold`` score
-  points emits a :class:`DriftAlert`;
+  against the window before it (a timestamp without a zone is read as UTC); a
+  rise of more than ``drift_threshold`` score points emits a :class:`DriftAlert`;
 - **peer agreement**: Cohen's kappa (quadratic weights) and Krippendorff's alpha
   (interval) with every peer, over the (item, criterion) scores both graded.
 
@@ -28,7 +28,7 @@ import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 import numpy as np
@@ -73,8 +73,8 @@ class CalibrationRules:
         if self.window < 1:
             msg = f"window must be at least 1, got {self.window}"
             raise ValueError(msg)
-        if self.drift_threshold < 0:
-            msg = f"drift_threshold must be >= 0, got {self.drift_threshold}"
+        if not math.isfinite(self.drift_threshold) or self.drift_threshold < 0:
+            msg = f"drift_threshold must be a finite number >= 0, got {self.drift_threshold}"
             raise ValueError(msg)
         if not 0.0 <= self.min_verdict_agreement <= 1.0:
             msg = f"min_verdict_agreement must be in [0, 1], got {self.min_verdict_agreement}"
@@ -203,6 +203,12 @@ def _mae(reviews: Sequence[GoldReview], gold: Mapping[str, GoldItem]) -> float:
     return float(np.mean(errors))
 
 
+def _order_key(review: GoldReview) -> tuple[datetime, str]:
+    """Sort key that reads a naive ``reviewed_at`` as UTC, so naive and aware mix."""
+    at = review.reviewed_at
+    return (at if at.tzinfo is not None else at.replace(tzinfo=UTC), review.item_id)
+
+
 def detect_drift(
     reviewer: str,
     reviews: Sequence[GoldReview],
@@ -210,7 +216,7 @@ def detect_drift(
     rules: CalibrationRules,
 ) -> DriftAlert | None:
     """Compare the last ``window`` gold reviews with the ``window`` before them."""
-    ordered = sorted(reviews, key=lambda r: (r.reviewed_at, r.item_id))
+    ordered = sorted(reviews, key=_order_key)
     if len(ordered) < 2 * rules.window:
         return None
     recent = ordered[-rules.window :]

@@ -87,3 +87,31 @@ def test_queue_sample_rejects_bad_flag_files(tmp_path: Path, content: str) -> No
     result = runner.invoke(app, ["queue", "sample", scenario, "--flags", str(flags)])
     assert result.exit_code == 1
     assert str(flags) in result.stderr
+
+
+def test_mixed_naive_and_aware_timestamps_do_not_crash(tmp_path: Path) -> None:
+    scores = "{correctness: 4, completeness: 3, clarity: 4, safe_advice: 0}"
+    gold = tmp_path / "gold.yaml"
+    gold.write_text(
+        f"rubric: code-explanation\nitems:\n  - {{id: g1, scores: {scores}}}\n"
+        f"  - {{id: g2, scores: {scores}}}\n"
+    )
+    reviews = tmp_path / "reviews.yaml"
+    reviews.write_text(
+        "reviews:\n"
+        f"  - {{reviewer: a, item: g1, at: '2026-09-01T09:00:00Z', scores: {scores}}}\n"
+        f"  - {{reviewer: a, item: g2, at: '2026-09-01T10:00:00', scores: {scores}}}\n"
+        f"  - {{reviewer: a, item: g1, at: 2026-09-01 11:00:00, scores: {scores}}}\n"
+    )
+    result = runner.invoke(
+        app, [*BASE, "--gold", str(gold), "--reviews", str(reviews), "--window", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "flagged for QA: none" in result.stdout
+
+
+@pytest.mark.parametrize("value", ["nan", "inf"])
+def test_non_finite_drift_threshold_is_a_usage_error(value: str) -> None:
+    result = runner.invoke(app, [*BASE, "--drift-threshold", value])
+    assert result.exit_code == 2
+    assert "finite" in result.output
