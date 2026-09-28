@@ -8,6 +8,7 @@ import typer
 
 from rubricops import __version__
 from rubricops.cli.agreement import agreement
+from rubricops.cli.db import db_app
 from rubricops.cli.rubric import rubric_app
 from rubricops.settings import get_settings
 
@@ -18,6 +19,7 @@ app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(rubric_app, name="rubric")
+app.add_typer(db_app, name="db")
 app.command("agreement")(agreement)
 
 
