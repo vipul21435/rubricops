@@ -52,3 +52,23 @@ class FrozenClock:
             raise ValueError(msg)
         self._now += delta
         return self._now
+
+
+class SteppingClock:
+    """A deterministic clock that moves ``step`` forward every time it is read.
+
+    Used by the pipeline walkthrough and tests, so every audit event gets a distinct,
+    reproducible timestamp and the hash chain is the same on every run.
+    """
+
+    def __init__(self, start: datetime, step: timedelta = timedelta(minutes=1)) -> None:
+        if step <= timedelta(0):
+            msg = f"step must be positive, got {step}"
+            raise ValueError(msg)
+        self._next = ensure_utc(start)
+        self._step = step
+
+    def now(self) -> datetime:
+        current = self._next
+        self._next += self._step
+        return current

@@ -24,7 +24,7 @@ RUN uv sync --frozen --no-dev --no-editable
 FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
 LABEL project=rubricops \
       org.opencontainers.image.title="rubricops" \
-      org.opencontainers.image.description="Versioned rubrics, rubric scoring and inter-rater agreement for expert review operations" \
+      org.opencontainers.image.description="Versioned rubrics, rubric scoring, a review pipeline with a hash-chained audit log, and inter-rater agreement" \
       org.opencontainers.image.source="https://github.com/vipul21435/rubricops" \
       org.opencontainers.image.licenses="MIT"
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin rubricops

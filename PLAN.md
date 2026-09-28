@@ -186,7 +186,45 @@ Tests:
 - Properties: invariance under relabelling for nominal metrics, kappa = 1 for
   identical raters, and the CI contains the point estimate.
 
-### Slice 3: Persistence and the review pipeline state machine with an append-only audit log
+### Slice 3: Persistence and the review pipeline state machine with an append-only audit log [x] done
+
+Decisions made while building it:
+- The state machine was built first (pure, no DB), so the models could reuse its
+  `Role`, `Status` and `Stage` enums for their CHECK constraints.
+- Actions: `assign`, `release`, `start`, `submit_primary`, `return_to_author`,
+  `send_to_qa`, `finalize`, `submit_qa`, `escalate`, `adjudicate`, `resubmit`. All
+  110 (status, action) pairs and the role matrix are tested against a table written
+  out independently in the test.
+- Independence guards beyond the two in the goal: nobody reviews, audits or
+  adjudicates their own submission; only the assignee starts, submits or returns a
+  primary review (a lead cannot submit someone else's); the adjudicator also must not
+  be the QA auditor. Returning an item from adjudication is lead-only.
+- QA passes only when the verdicts match *and* the scores are within
+  `qa_tolerance` (default 0.1), compared as exact decimals so 0.8 vs 0.7 is exactly
+  0.1 apart. Same score but a failed gate is a disagreement.
+- `resubmit` starts a new `round`; reviews and assignments carry the round, so an
+  earlier draft's reviews never count, and (submission, round, stage) is unique.
+- The audit log is one global chain. `seq` is assigned by the writer (head + 1) so it
+  is part of the hashed content, and UNIQUE on `prev_hash` and `hash` makes a fork
+  impossible to commit. `verify_audit_chain` re-reads rows with `populate_existing`
+  so it checks what is stored, not what the session cached. Truncating the newest
+  events leaves a valid shorter chain, so the report prints an anchor (`seq:hash`)
+  that can be passed back with `--anchor` to catch it.
+- `rubric_versions` is append-only too (ORM guards, bulk-statement guard and
+  triggers), and the service re-checks a version's body against its hash before
+  scoring with it.
+- Optimistic locking: `apply()` takes the caller's `expected_version` and checks it
+  first; SQLAlchemy's `version_id_col` catches a writer that races between the read
+  and the write. Both surface as `StaleSubmission`.
+- Migrations ship inside the package (no `alembic.ini` needed) and run via
+  `rubricops db upgrade|downgrade|current`. The migration inlines its trigger SQL;
+  a test checks that a migrated database and a `create_all` database have identical
+  triggers, and another that autogenerate finds zero drift.
+- Postgres trigger SQL exists in the migration and models but is not exercised yet;
+  the Postgres test job is part of slice 7.
+- A deterministic `rubricops pipeline walkthrough` (a `SteppingClock` from a fixed
+  instant) was added so the README and `make demo` show real pipeline output.
+
 
 Goal: `rubricops.db` provides an engine and session factory from settings (SQLite
 pragmas: foreign_keys=ON and WAL; any SQLAlchemy URL) and typed SQLAlchemy 2

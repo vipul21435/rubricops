@@ -149,7 +149,7 @@ def test_canonical_form_is_stable_and_ascii() -> None:
         entity_id=1,
         from_status=None,
         to_status="queued",
-        data={"b": 1, "a": "café"},
+        data={"b": 1, "a": "caf" + chr(0xE9)},
     )
     assert first.isascii()
     assert first.index('"a"') < first.index('"b"')

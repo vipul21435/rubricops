@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from rubricops.domain.clock import FrozenClock, SystemClock, ensure_utc
+from rubricops.domain.clock import FrozenClock, SteppingClock, SystemClock, ensure_utc
 
 T0 = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
@@ -42,3 +42,11 @@ def test_naive_datetimes_are_rejected() -> None:
         FrozenClock(naive)
     with pytest.raises(ValueError, match="timezone-aware"):
         FrozenClock(T0).set(naive)
+
+
+def test_stepping_clock_moves_on_every_read() -> None:
+    start = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+    clock = SteppingClock(start, timedelta(seconds=30))
+    assert [clock.now(), clock.now()] == [start, start + timedelta(seconds=30)]
+    with pytest.raises(ValueError, match="positive"):
+        SteppingClock(start, timedelta(0))

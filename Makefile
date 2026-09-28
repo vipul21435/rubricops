@@ -31,7 +31,7 @@ check: lint typecheck cov ## Everything CI runs
 
 IMAGE ?= rubricops:dev
 
-demo: ## End-to-end demo on the bundled examples (rubrics, scoring, agreement)
+demo: ## End-to-end demo: rubrics, scoring, agreement, review pipeline and audit check
 	sh scripts/demo.sh
 
 docker-build: ## Build the slim runtime image

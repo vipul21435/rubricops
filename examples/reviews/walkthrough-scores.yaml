@@ -1,0 +1,8 @@
+# Score maps for `rubricops pipeline walkthrough`, graded with code-explanation.yaml
+# (correctness 1..4 gated at 3, completeness 1..4, clarity 1..4, safe_advice 0..2
+# gated at 1; pass threshold 0.7).
+good:     {correctness: 3, completeness: 3, clarity: 4, safe_advice: 1}  # 0.7083 pass
+better:   {correctness: 4, completeness: 3, clarity: 3, safe_advice: 2}  # 0.8500 pass
+close:    {correctness: 4, completeness: 3, clarity: 4, safe_advice: 2}  # 0.9167 pass
+gated:    {correctness: 2, completeness: 3, clarity: 3, safe_advice: 1}  # 0.5083, gate fails
+settled:  {correctness: 3, completeness: 3, clarity: 3, safe_advice: 1}  # 0.6417 fail

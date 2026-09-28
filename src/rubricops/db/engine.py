@@ -39,8 +39,8 @@ def make_engine(url: str, *, echo: bool = False) -> Engine:
     if memory:
         kwargs["poolclass"] = StaticPool
         kwargs["connect_args"] = {"check_same_thread": False}
-    elif parsed.database:
-        Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)
+    else:  # a file database: the name is non-empty, or it would be in-memory
+        Path(str(parsed.database)).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, **kwargs)
 
     @event.listens_for(engine, "connect")

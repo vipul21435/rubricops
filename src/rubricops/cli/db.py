@@ -22,7 +22,7 @@ UrlOption = Annotated[
 ]
 
 
-def _resolve(url: str | None) -> str:
+def resolve_url(url: str | None) -> str:
     return url or get_settings().database_url
 
 
@@ -39,7 +39,7 @@ def upgrade(
     ),
 ) -> None:
     """Migrate the database up to REVISION (default: head)."""
-    target = _resolve(url)
+    target = resolve_url(url)
     if sql:
         migrate.upgrade_sql(target, revision)
         return
@@ -53,7 +53,7 @@ def downgrade(
     url: UrlOption = None,
 ) -> None:
     """Migrate the database down to REVISION."""
-    target = _resolve(url)
+    target = resolve_url(url)
     migrate.downgrade(target, revision)
     current = migrate.current_revision(target) or "base (empty)"
     typer.echo(f"{_masked(target)} is at revision {current}")
@@ -62,5 +62,5 @@ def downgrade(
 @db_app.command("current")
 def current(url: UrlOption = None) -> None:
     """Print the revision the database is at."""
-    target = _resolve(url)
+    target = resolve_url(url)
     typer.echo(f"{_masked(target)} is at revision {migrate.current_revision(target) or 'none'}")
