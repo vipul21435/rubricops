@@ -131,7 +131,30 @@ Tests:
 - hypothesis properties: the score stays in [0, 1] and is monotone in each criterion
   score
 
-### Slice 2: Agreement statistics with bootstrap confidence intervals
+### Slice 2: Agreement statistics with bootstrap confidence intervals [x] done
+
+Decisions made while building it:
+- Ratings are encoded once (`ReliabilityData`) against a fixed, ordered category
+  list, so a bootstrap resample keeps the category set, and therefore the weights,
+  of the full data.
+- Weighted kappa weights by rating *value* over the declared span, so unused scale
+  points change nothing and quadratic-weighted kappa equals Lin's concordance.
+- Fleiss' kappa requires the same number of ratings on every rated unit and raises
+  with a pointer to Krippendorff's alpha otherwise, instead of silently dropping
+  units.
+- The bootstrap requires a seed. A resample with no defined statistic is skipped and
+  counted in `n_degenerate`; an undefined point estimate skips resampling. "The CI
+  contains the estimate" is not true in general for percentile intervals, so it is
+  exposed as `CIResult.contains_estimate` and tested on moderate data rather than
+  claimed as a universal property.
+- The ratings CSV loader reads a wide (unit then one column per rater) or long
+  (unit, rater, rating) layout and, like the YAML loader, rejects rather than
+  guesses: repeated units or (unit, rater) pairs, ragged rows and malformed quoting
+  are errors with line numbers.
+- The CLI accepts all six registered metrics (`cohen`, `cohen-linear`,
+  `cohen-quadratic`, `fleiss`, `alpha-nominal`, `alpha-interval`), repeatable. A
+  metric that cannot apply to the data is an error on its own line (exit 1) while the
+  others still print.
 
 Goal: `rubricops.stats.agreement` implements, in numpy:
 - Cohen's kappa for two raters: unweighted, plus linear and quadratic weighted
@@ -322,6 +345,12 @@ Tests: httpx TestClient on SQLite, a role matrix test, the UI rendering with the
 expected HTMX attributes, and an export round trip.
 
 ### Slice 7: Seeded demo dataset, Docker/compose and an end-to-end make demo
+
+Pulled forward (done): a CLI-only image (digest-pinned python:3.12-slim and uv, uv
+sync --frozen, non-root, `LABEL project=rubricops`), `scripts/demo.sh` behind
+`make demo` and `make docker-demo`, and a CI job that builds the image and runs the
+demo in it. Still open: everything below that needs the service (compose, Postgres,
+HEALTHCHECK, the seeded HTTP demo).
 
 Goal: `rubricops seed` generates an original, deterministic demo idempotently:
 - rubrics
