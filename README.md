@@ -243,7 +243,11 @@ $ rubricops calibration report --reviewer emeka | grep -E "drift|flags"
   mean signed error (reviewer minus gold) is above or below 0; asha and dara, who
   are unbiased with some noise, are not flagged. `--resamples` and `--seed` set the
   bootstrap, `--window` and `--drift-threshold` the drift check, and a pass/fail
-  agreement below 0.8 is also a flag.
+  agreement below 0.8 is also a flag. See Known issues below for how few gold
+  reviews this needs.
+- Drift orders a reviewer's gold reviews by `at`; a timestamp without a zone is read
+  as UTC, so zoned and zoneless values can be mixed. `--drift-threshold` must be a
+  finite number >= 0 (`nan` or `inf` is a usage error, exit 2).
 - Peer agreement uses the (item, criterion) scores both reviewers gave.
 - `--format json` prints the same report as JSON, and `rubricops queue sample
   --flags report.json` reads its `flagged` list: on the queue example with `--rate 0`
@@ -414,8 +418,8 @@ reproduces it.
 
 | What | Result | Command |
 | --- | --- | --- |
-| Tests | 701 passed | `make cov` |
-| Coverage (line and branch) | 100% of 2918 statements and 612 branches (the gate is 85%) | `make cov` |
+| Tests | 707 passed | `make cov` |
+| Coverage (line and branch) | 100% of 2923 statements and 614 branches (the gate is 85%) | `make cov` |
 | Static checks | ruff clean, `mypy --strict` clean on 38 source files | `make lint typecheck` |
 | End-to-end demo | 6.0-6.1 s wall time over three runs, including the queue commands, the calibration report and the pipeline walkthrough | `time make demo` |
 | Pipeline walkthrough | 26 audit events, head hash `f3b4e8815a25`, identical on macOS and in the image | `make demo`, `make docker-demo` |
@@ -493,6 +497,19 @@ second-round review is sent to QA because the item's first-round scores disagree
 - **Strict tooling from the first commit.** ruff with a broad rule set, `mypy
   --strict`, `filterwarnings = error` in pytest and an 85% branch-coverage gate, all
   enforced in CI.
+
+## Known issues
+
+Found in review and not fixed yet:
+
+- **Small-sample bias labels.** `lenient` / `harsh` needs the whole bootstrap
+  interval on one side of 0, but there is no minimum sample size: with a single gold
+  review (or identical errors) every resample is the same, the interval collapses to
+  one point, and one review that is one point off labels the reviewer and flags them
+  for QA. `calibrate` also does not deduplicate repeated (reviewer, item) reviews, so
+  a repeated review counts as several bootstrap units.
+- **Gold file checks.** Repeated gold item ids are silently last-wins, and the gold
+  file's `rubric:` field is parsed but not compared with the `--rubric` id.
 
 ## Roadmap
 
