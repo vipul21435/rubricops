@@ -49,3 +49,19 @@ jobs:
           name: coverage-xml
           path: coverage.xml
           if-no-files-found: ignore
+
+  docker:
+    name: image build and demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the runtime image
+        run: docker build -t rubricops:ci .
+
+      - name: Run the end-to-end demo inside the image
+        run: docker run --rm --entrypoint sh -e RUBRICOPS=rubricops rubricops:ci scripts/demo.sh
+
+      - name: Check the image runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id rubricops:ci -u)" != "0"
