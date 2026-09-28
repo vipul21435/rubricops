@@ -417,7 +417,7 @@ reproduces it.
 | Tests | 689 passed | `make cov` |
 | Coverage (line and branch) | 100% of 2896 statements and 606 branches (the gate is 85%) | `make cov` |
 | Static checks | ruff clean, `mypy --strict` clean on 38 source files | `make lint typecheck` |
-| End-to-end demo | 4.5-5.6 s wall time over three runs, including the queue commands and the pipeline walkthrough | `time make demo` |
+| End-to-end demo | 6.0-6.1 s wall time over three runs, including the queue commands, the calibration report and the pipeline walkthrough | `time make demo` |
 | Pipeline walkthrough | 26 audit events, head hash `f3b4e8815a25`, identical on macOS and in the image | `make demo`, `make docker-demo` |
 | Bootstrap | 20,000 resamples of interval alpha on the 20-unit example in 0.8-1.1 s, including CLI start-up (three runs) | `time uv run rubricops agreement examples/ratings/correctness-3-reviewers.csv -m alpha-interval --resamples 20000` |
 | QA sampling rate | 1044 of 10,000 risk-free reviews sampled at rate 0.1 with seed 20260929 (expected 1000, one standard deviation 30); the test suite checks rates 0.05, 0.1 and 0.5 against 4-sigma binomial bounds | `uv run python -c "from rubricops.domain.sampling import *; s = QaSampler(SamplingRules(rate=0.1), 20260929); print(sum(d.sampled for d in s.decide_all(SampleCandidate(i, 1, 0.9, 0.7, 100) for i in range(10_000))))"` |
