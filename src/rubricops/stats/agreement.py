@@ -24,8 +24,9 @@ Malformed input (wrong number of raters, text ratings for a weighted metric) rai
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal
 
 import numpy as np
@@ -285,3 +286,40 @@ def krippendorff_alpha(
         n_units=int((per_unit >= 2).sum()),
         empty_reason="no unit has two or more ratings, so no rating can be paired",
     )
+
+
+def _cohen_unweighted(data: ReliabilityData) -> AgreementResult:
+    return cohen_kappa(data)
+
+
+def _cohen_linear(data: ReliabilityData) -> AgreementResult:
+    return cohen_kappa(data, weights="linear")
+
+
+def _cohen_quadratic(data: ReliabilityData) -> AgreementResult:
+    return cohen_kappa(data, weights="quadratic")
+
+
+def _alpha_nominal(data: ReliabilityData) -> AgreementResult:
+    return krippendorff_alpha(data, level="nominal")
+
+
+def _alpha_interval(data: ReliabilityData) -> AgreementResult:
+    return krippendorff_alpha(data, level="interval")
+
+
+def _fleiss(data: ReliabilityData) -> AgreementResult:
+    return fleiss_kappa(data)
+
+
+METRICS: Mapping[str, Callable[[ReliabilityData], AgreementResult]] = MappingProxyType(
+    {
+        "cohen": _cohen_unweighted,
+        "cohen-linear": _cohen_linear,
+        "cohen-quadratic": _cohen_quadratic,
+        "fleiss": _fleiss,
+        "alpha-nominal": _alpha_nominal,
+        "alpha-interval": _alpha_interval,
+    }
+)
+"""Every coefficient by the name it reports in ``AgreementResult.metric``."""
