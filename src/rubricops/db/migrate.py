@@ -13,7 +13,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 
-from rubricops.db.engine import make_engine
+from rubricops.db.engine import make_engine, missing_sqlite_file
 from rubricops.settings import get_settings
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -44,7 +44,10 @@ def upgrade_sql(url: str | None = None, revision: str = "head") -> None:
 
 def current_revision(url: str | None = None) -> str | None:
     """The revision the database at ``url`` is at, or ``None`` if it is unversioned."""
-    engine = make_engine(url or get_settings().database_url)
+    target = url or get_settings().database_url
+    if missing_sqlite_file(target) is not None:
+        return None  # do not create the file just to report that it is empty
+    engine = make_engine(target)
     try:
         with engine.connect() as connection:
             return MigrationContext.configure(connection).get_current_revision()

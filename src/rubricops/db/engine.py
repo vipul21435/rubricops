@@ -23,6 +23,19 @@ def _is_memory_sqlite(database: str | None) -> bool:
     return database in (None, "", ":memory:") or (database or "").startswith("file::memory:")
 
 
+def missing_sqlite_file(url: str) -> Path | None:
+    """The path of a SQLite file URL whose file does not exist, else ``None``.
+
+    Read-only commands check this first, because connecting would create the file
+    (and :func:`make_engine` its parent directories).
+    """
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite" or _is_memory_sqlite(parsed.database):
+        return None
+    path = Path(str(parsed.database))
+    return None if path.exists() else path
+
+
 def make_engine(url: str, *, echo: bool = False) -> Engine:
     """Create an engine for ``url``; SQLite gets foreign keys, WAL and a busy timeout.
 

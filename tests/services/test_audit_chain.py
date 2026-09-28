@@ -156,3 +156,20 @@ def test_canonical_form_is_stable_and_ascii() -> None:
     assert '"occurred_at":"2026-09-01T09:00:00.000000+00:00"' in first
     assert link_hash(GENESIS_HASH, first) == link_hash(GENESIS_HASH, first)
     assert len(link_hash(GENESIS_HASH, first)) == 64
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ["null", "[1, 2]", '"text"', "42", '{"round": NaN}', '{"round": Infinity}', "not json"],
+)
+def test_data_that_is_not_a_json_object_is_a_broken_link(chained: World, stored: str) -> None:
+    with chained.sessions() as session:
+        _unguard(session)
+        session.execute(text("UPDATE audit_events SET data = :d WHERE seq = 9"), {"d": stored})
+        report = verify_audit_chain(session)
+    assert not report.ok
+    assert report.broken_at == 9
+    assert report.checked == 8
+    assert report.reason is not None
+    assert report.reason.startswith("data is not a JSON object that can be hashed")
+    assert report.summary().startswith("BROKEN at seq 9: data is not a JSON object")

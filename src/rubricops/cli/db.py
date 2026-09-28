@@ -26,7 +26,7 @@ def resolve_url(url: str | None) -> str:
     return url or get_settings().database_url
 
 
-def _masked(url: str) -> str:
+def masked_url(url: str) -> str:
     return make_url(url).render_as_string(hide_password=True)
 
 
@@ -44,7 +44,7 @@ def upgrade(
         migrate.upgrade_sql(target, revision)
         return
     migrate.upgrade(target, revision)
-    typer.echo(f"{_masked(target)} is at revision {migrate.current_revision(target)}")
+    typer.echo(f"{masked_url(target)} is at revision {migrate.current_revision(target)}")
 
 
 @db_app.command("downgrade")
@@ -56,11 +56,11 @@ def downgrade(
     target = resolve_url(url)
     migrate.downgrade(target, revision)
     current = migrate.current_revision(target) or "base (empty)"
-    typer.echo(f"{_masked(target)} is at revision {current}")
+    typer.echo(f"{masked_url(target)} is at revision {current}")
 
 
 @db_app.command("current")
 def current(url: UrlOption = None) -> None:
     """Print the revision the database is at."""
     target = resolve_url(url)
-    typer.echo(f"{_masked(target)} is at revision {migrate.current_revision(target) or 'none'}")
+    typer.echo(f"{masked_url(target)} is at revision {migrate.current_revision(target) or 'none'}")

@@ -1,7 +1,8 @@
 """``rubricops pipeline walkthrough`` and ``rubricops audit verify``.
 
-Exit codes: 0 success, 1 a broken audit chain, a non-empty walkthrough database or
-invalid input files, 2 usage error.
+Exit codes: 0 success, 1 a broken audit chain, a missing or unmigrated database
+for ``audit verify``, a non-empty walkthrough database or invalid input files
+(including score maps that would not take the scripted routes), 2 usage error.
 """
 
 from __future__ import annotations
@@ -11,9 +12,11 @@ from typing import Annotated
 
 import typer
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import inspect
 
-from rubricops.cli.db import UrlOption, resolve_url
-from rubricops.db.engine import make_engine, make_session_factory
+from rubricops.cli.db import UrlOption, masked_url, resolve_url
+from rubricops.db.engine import make_engine, make_session_factory, missing_sqlite_file
+from rubricops.db.models import AuditEvent
 from rubricops.domain.scoring import InvalidScoresError, validate_scores
 from rubricops.loaders import DocumentError, format_validation_error, load_document, load_rubric
 from rubricops.services.audit import verify_audit_chain
@@ -83,8 +86,20 @@ def verify(
                 "expected SEQ:HASH with a 64-character hash", param_hint="--anchor"
             )
         pinned = (int(seq), digest)
-    engine = make_engine(resolve_url(url))
+    target = resolve_url(url)
+    missing = missing_sqlite_file(target)
+    if missing is not None:
+        typer.echo(f"error: no database at {missing}; nothing to verify", err=True)
+        raise typer.Exit(code=1)
+    engine = make_engine(target)
     try:
+        if not inspect(engine).has_table(AuditEvent.__tablename__):
+            typer.echo(
+                f"error: {masked_url(target)} has no audit log table; "
+                "run rubricops db upgrade first",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         with make_session_factory(engine)() as session:
             report = verify_audit_chain(session, anchor=pinned)
     finally:

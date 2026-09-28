@@ -42,3 +42,11 @@ def test_password_is_masked(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "hunter2" not in result.stdout
     assert "postgresql://u:***@db/r is at revision none" in result.stdout
     assert calls == ["postgresql://u:hunter2@db/r"]
+
+
+def test_current_does_not_create_a_missing_database(tmp_path: Path) -> None:
+    db = tmp_path / "nested" / "missing.db"
+    result = runner.invoke(app, ["db", "current", "--url", f"sqlite:///{db}"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"sqlite:///{db} is at revision none"
+    assert not db.parent.exists()

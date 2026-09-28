@@ -25,8 +25,9 @@ from rubricops.db import migrate
 from rubricops.db.engine import make_engine, make_session_factory
 from rubricops.db.models import User
 from rubricops.domain.clock import SteppingClock
-from rubricops.domain.pipeline import Action, PipelineError, Role
+from rubricops.domain.pipeline import Action, PipelineError, PipelinePolicy, Role, qa_agrees
 from rubricops.domain.rubric import Rubric
+from rubricops.domain.scoring import exact_score, score_review
 from rubricops.services.audit import ChainReport, verify_audit_chain
 from rubricops.services.pipeline import PipelineService, StaleSubmission, TransitionResult
 
@@ -34,7 +35,7 @@ WALKTHROUGH_START = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 
 
 class WalkthroughError(RuntimeError):
-    """The target database is not empty."""
+    """The target database is not empty, or the score maps would not take the routes."""
 
 
 Echo = Callable[[str], None]
@@ -159,14 +160,46 @@ def _scenarios(run: _Runner, cast: _Cast, scores: Mapping[str, Mapping[str, int]
     return [first, second, third]
 
 
+def check_routes(
+    rubric: Rubric,
+    scores: Mapping[str, Mapping[str, int]],
+    policy: PipelinePolicy | None = None,
+) -> None:
+    """Raise :class:`WalkthroughError` unless ``scores`` take the three scripted routes.
+
+    Submission 2 is finalized after QA, so ``close`` must agree with ``better``;
+    submission 3 is escalated, so ``gated`` must not. Checked before the database
+    is touched, so a bad scores file never leaves a half-written database behind.
+    """
+    rules = policy or PipelinePolicy()
+    better = score_review(rubric, scores["better"]).passed
+    exact_better = exact_score(rubric, scores["better"])
+
+    def agrees(key: str) -> bool:
+        passed = score_review(rubric, scores[key]).passed
+        return qa_agrees(exact_better, better, exact_score(rubric, scores[key]), passed, rules)
+
+    problems = []
+    if not agrees("close"):
+        problems.append(
+            "'close' must have the same verdict as 'better' and be within the QA "
+            f"tolerance ({rules.qa_tolerance}) of it, so submission 2 passes QA"
+        )
+    if agrees("gated"):
+        problems.append("'gated' must disagree with 'better', so submission 3 fails QA")
+    if problems:
+        raise WalkthroughError("; ".join(problems))
+
+
 def run_walkthrough(
     url: str, rubric: Rubric, scores: Mapping[str, Mapping[str, int]], echo: Echo
 ) -> ChainReport:
     """Run the scripted scenario on the database at ``url`` and return the chain report.
 
     ``scores`` needs the keys ``good``, ``better``, ``close``, ``gated`` and ``settled``,
-    each a complete score map for ``rubric``.
+    each a complete score map for ``rubric`` that takes the routes (:func:`check_routes`).
     """
+    check_routes(rubric, scores)
     migrate.upgrade(url)
     engine = make_engine(url)
     try:

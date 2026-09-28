@@ -26,8 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import Text, select, type_coerce
+from sqlalchemy.orm import Session, defer
 
 from rubricops.db.models import GENESIS_HASH, AuditEvent
 from rubricops.domain.clock import Clock, ensure_utc
@@ -67,7 +67,24 @@ def link_hash(prev_hash: str, canonical: str) -> str:
     return hashlib.sha256((prev_hash + canonical).encode("ascii")).hexdigest()
 
 
-def _canonical_of(event: AuditEvent) -> str:
+def _reject_constant(name: str) -> None:
+    msg = f"{name} is not valid JSON"
+    raise ValueError(msg)
+
+
+def _stored_data(raw: object) -> Mapping[str, Any]:
+    """The stored payload as a mapping; ``ValueError`` when it is not a JSON object."""
+    value = json.loads(raw, parse_constant=_reject_constant) if isinstance(raw, str) else raw
+    if not isinstance(value, dict):
+        msg = f"data is a JSON {type(value).__name__}, not an object"
+        raise ValueError(msg)
+    return value
+
+
+def _canonical_of(event: AuditEvent, raw_data: object = None) -> str:
+    """The canonical form of a stored event; ``raw_data`` defaults to ``event.data``."""
+    if raw_data is None:
+        raw_data = event.data
     return canonical_event(
         seq=event.seq,
         occurred_at=event.occurred_at,
@@ -77,8 +94,18 @@ def _canonical_of(event: AuditEvent) -> str:
         entity_id=event.entity_id,
         from_status=event.from_status,
         to_status=event.to_status,
-        data=event.data,
+        data=_stored_data(raw_data),
     )
+
+
+def _content_problem(prev_hash: str, event: AuditEvent, raw_data: object) -> str | None:
+    try:
+        canonical = _canonical_of(event, raw_data)
+    except (TypeError, ValueError) as exc:  # json.JSONDecodeError is a ValueError
+        return f"data is not a JSON object that can be hashed ({exc})"
+    if link_hash(prev_hash, canonical) != event.hash:
+        return "hash does not match the event's content"
+    return None
 
 
 def append_event(
@@ -157,15 +184,22 @@ def verify_audit_chain(session: Session, *, anchor: tuple[int, str] | None = Non
     anchor_seen = anchor is None
     checked = 0
     # populate_existing: verify what is stored, not objects cached in this session.
-    rows = select(AuditEvent).order_by(AuditEvent.seq).execution_options(populate_existing=True)
-    for event in session.scalars(rows):
+    # The payload is read as raw text, so a row whose data was replaced by something
+    # that is not a JSON object is reported as broken rather than crashing the load.
+    rows = (
+        select(AuditEvent, type_coerce(AuditEvent.data, Text).label("raw_data"))
+        .options(defer(AuditEvent.data))
+        .order_by(AuditEvent.seq)
+        .execution_options(populate_existing=True)
+    )
+    for event, raw_data in session.execute(rows):
         problem: str | None = None
         if event.seq != expected_seq:
             problem = f"expected seq {expected_seq}, found {event.seq} (events missing)"
         elif event.prev_hash != prev_hash:
             problem = "prev_hash does not match the previous event's hash"
-        elif link_hash(prev_hash, _canonical_of(event)) != event.hash:
-            problem = "hash does not match the event's content"
+        elif (content := _content_problem(prev_hash, event, raw_data)) is not None:
+            problem = content
         elif anchor is not None and event.seq == anchor[0]:
             if event.hash != anchor[1]:
                 problem = "hash differs from the anchored hash"
