@@ -1,7 +1,7 @@
 [project]
 name = "rubricops"
 version = "0.1.0"
-description = "Expert review and rubric-grading operations: versioned rubrics, review queues, QA audit and adjudication, reviewer calibration and inter-rater agreement."
+description = "Expert review operations: versioned weighted rubrics, exact rubric scoring and inter-rater agreement with bootstrap confidence intervals."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
