@@ -189,14 +189,15 @@ def sample(
     sampler = QaSampler(rules, settings.random_seed if seed is None else seed)
     decisions = sampler.decide_all(scenario.sample_candidates(flagged))
     handles = scenario.handles()
-    reviewer_of = {r.submission: r.reviewer for r in scenario.reviews}
     sampled = sum(d.sampled for d in decisions)
     typer.echo(
         f"seed {sampler.seed}, rate {rules.rate:g}: {sampled} of {len(decisions)} sent to QA"
     )
-    for d in decisions:
+    # One decision per review, in order: a submission reviewed in several rounds
+    # has several rows, each with its own reviewer.
+    for d, review in zip(decisions, scenario.reviews, strict=True):
         verdict = "QA      " if d.sampled else "finalize"
-        who = handles[reviewer_of[d.submission_id]]
+        who = handles[review.reviewer]
         codes = "+".join(r.value for r in d.reasons) or "none"
         why = "; ".join(d.details) if d.details else f"draw {d.draw:.4f} >= rate {d.rate:g}"
         typer.echo(f"  {d.submission_id:>6}  {verdict}  {who:<8} {codes:<31} {why}")

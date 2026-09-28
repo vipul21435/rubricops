@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -61,12 +61,14 @@ class ReviewSpec(_Strict):
     score: float = Field(ge=0, le=1)
     threshold: float = Field(ge=0, le=1)
     round: int = Field(default=1, ge=1)
-    item_scores: list[float] = Field(default_factory=list)
+    item_scores: list[Annotated[float, Field(ge=0, le=1)]] = Field(default_factory=list)
 
 
 class SlaSpec(_Strict):
-    default_hours: float | None = Field(default=None, gt=0)
-    rubrics: dict[str, float] = Field(default_factory=dict)
+    default_hours: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    rubrics: dict[str, Annotated[float, Field(gt=0, allow_inf_nan=False)]] = Field(
+        default_factory=dict
+    )
 
 
 class Scenario(_Strict):
@@ -93,6 +95,16 @@ class Scenario(_Strict):
                 msg = f"{kind} name reviewers that are not listed: {unknown}"
                 raise ValueError(msg)
         self.queue_items()  # the domain value objects check stage-specific fields
+        try:  # the SLA hours must also make usable durations (not 0 once rounded, no overflow)
+            self.sla_policy(1.0)
+        except OverflowError as exc:
+            msg = f"sla hours are too large: {exc}"
+            raise ValueError(msg) from exc
+        rounds = [(r.submission, r.round) for r in self.reviews]
+        repeated = sorted({key for key in rounds if rounds.count(key) > 1})
+        if repeated:
+            msg = f"reviews repeat a (submission, round) pair: {repeated}"
+            raise ValueError(msg)
         for a in self.assignments:
             if a.due_at is not None and a.due_at < a.assigned_at:
                 msg = f"assignment for submission {a.submission}: due_at is before assigned_at"

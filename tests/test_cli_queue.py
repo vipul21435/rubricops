@@ -171,6 +171,23 @@ def test_sample_is_deterministic_and_follows_options(monkeypatch: pytest.MonkeyP
 # -- scenario validation ------------------------------------------------------
 
 
+def test_sample_names_each_rounds_own_reviewer(tmp_path: Path) -> None:
+    path = _dump(
+        tmp_path,
+        {
+            "reviewers": [{"id": 11, "handle": "asha"}, {"id": 12, "handle": "bruno"}],
+            "reviews": [
+                {"submission": 80, "reviewer": 11, "round": 1, "score": 0.95, "threshold": 0.5},
+                {"submission": 80, "reviewer": 12, "round": 2, "score": 0.95, "threshold": 0.5},
+            ],
+        },
+    )
+    code, out, _ = _run("sample", path, "--rate", "0", "--min-reviews", "0")
+    assert code == 0
+    rows = out.splitlines()[1:]
+    assert [row.split()[2] for row in rows] == ["asha", "bruno"]
+
+
 def test_the_example_scenario_loads() -> None:
     scenario = load_scenario(Path(SCENARIO))
     assert len(scenario.reviewer_pool()) == 5
@@ -216,6 +233,36 @@ def test_the_example_scenario_loads() -> None:
             "timezone",
         ),
         ({"reviewers": [], "extra": 1}, "extra: Extra inputs are not permitted"),
+        ({"sla": {"default_hours": 24, "rubrics": {"fast": 0}}}, "greater than 0"),
+        ({"sla": {"rubrics": {"fast": float("nan")}}}, "finite number"),
+        ({"sla": {"default_hours": float("inf")}}, "finite number"),
+        ({"sla": {"rubrics": {"fast": 1e-300}}}, "SLA for fast must be positive"),
+        ({"sla": {"rubrics": {"fast": 1e20}}}, "sla hours are too large"),
+        (
+            {
+                "reviewers": [{"id": 1, "handle": "a"}],
+                "reviews": [
+                    {
+                        "submission": 1,
+                        "reviewer": 1,
+                        "score": 0.9,
+                        "threshold": 0.5,
+                        "item_scores": [1.5],
+                    }
+                ],
+            },
+            "less than or equal to 1",
+        ),
+        (
+            {
+                "reviewers": [{"id": 1, "handle": "a"}, {"id": 2, "handle": "b"}],
+                "reviews": [
+                    {"submission": 80, "reviewer": 1, "score": 0.9, "threshold": 0.5},
+                    {"submission": 80, "reviewer": 2, "score": 0.9, "threshold": 0.5},
+                ],
+            },
+            "reviews repeat a (submission, round) pair: [(80, 1)]",
+        ),
     ],
 )
 def test_invalid_scenarios_exit_1(tmp_path: Path, data: object, message: str) -> None:
