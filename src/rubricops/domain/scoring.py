@@ -105,6 +105,28 @@ def validate_scores(rubric: Rubric, scores: Mapping[str, object]) -> dict[str, i
     return clean
 
 
+def _shares(rubric: Rubric) -> dict[str, Fraction]:
+    """Each criterion's exact share of the total weight."""
+    weights = {c.id: exact_decimal(c.weight) for c in rubric.criteria}
+    total_weight = sum(weights.values(), Fraction(0))
+    return {cid: weight / total_weight for cid, weight in weights.items()}
+
+
+def exact_score(rubric: Rubric, scores: Mapping[str, object]) -> Fraction:
+    """The exact rational total of ``scores``; ``score_review(...).score`` is its float.
+
+    Comparisons between reviews (the QA tolerance, calibration against gold items)
+    use this value, because a float such as 11/15 = 0.7333333333333333 is rounded
+    and two scores exactly 1/10 apart can come out 0.1000000000000001 apart.
+    """
+    clean = validate_scores(rubric, scores)
+    shares = _shares(rubric)
+    return sum(
+        (shares[c.id] * c.normalise(clean[c.id]) for c in rubric.criteria),
+        Fraction(0),
+    )
+
+
 def score_review(
     rubric: Rubric,
     scores: Mapping[str, object],
@@ -113,8 +135,7 @@ def score_review(
 ) -> ScoreResult:
     """Score ``scores`` against ``rubric``; ``version`` is recorded when known."""
     clean = validate_scores(rubric, scores)
-    weights = {c.id: exact_decimal(c.weight) for c in rubric.criteria}
-    total_weight = sum(weights.values(), Fraction(0))
+    shares = _shares(rubric)
 
     parts: list[CriterionScore] = []
     gating_failures: list[GatingFailure] = []
@@ -122,7 +143,7 @@ def score_review(
     for criterion in rubric.criteria:
         value = clean[criterion.id]
         normalised = criterion.normalise(value)
-        share = weights[criterion.id] / total_weight
+        share = shares[criterion.id]
         contribution = share * normalised
         total += contribution
         parts.append(

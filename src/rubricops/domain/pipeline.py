@@ -37,6 +37,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from fractions import Fraction
 from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -136,7 +137,8 @@ class Facts:
     author_id: int
     assignee_id: int | None = None
     primary_reviewer_id: int | None = None
-    primary_score: float | None = None
+    #: The primary review's score; pass the exact ``Fraction`` when it is known.
+    primary_score: Fraction | float | None = None
     primary_passed: bool | None = None
     qa_reviewer_id: int | None = None
 
@@ -153,7 +155,7 @@ class Command:
     action: Action
     actor: Actor
     assignee: Actor | None = None
-    score: float | None = None
+    score: Fraction | float | None = None
     passed: bool | None = None
 
 
@@ -281,18 +283,27 @@ def allowed_actions(status: Status) -> frozenset[Action]:
     return frozenset(action for (source, action) in TRANSITIONS if source is status)
 
 
+def _exact(score: Fraction | float) -> Fraction:
+    return score if isinstance(score, Fraction) else exact_decimal(score)
+
+
 def qa_agrees(
-    primary_score: float,
+    primary_score: Fraction | float,
     primary_passed: bool,
-    qa_score: float,
+    qa_score: Fraction | float,
     qa_passed: bool,
     policy: PipelinePolicy,
 ) -> bool:
-    """True when a QA review confirms the primary one: same verdict, score within tolerance."""
+    """True when a QA review confirms the primary one: same verdict, score within tolerance.
+
+    Pass the scores as exact ``Fraction`` values (see
+    :func:`rubricops.domain.scoring.exact_score`): 11/15 and 5/6 are exactly 1/10
+    apart, but their floats are 0.1000000000000001 apart. A float is read as the
+    decimal it prints as, so 0.8 vs 0.7 is also exactly 0.1 apart.
+    """
     if primary_passed != qa_passed:
         return False
-    # Compared as the decimals the scores print as, so 0.8 vs 0.7 is exactly 0.1 apart.
-    distance = abs(exact_decimal(qa_score) - exact_decimal(primary_score))
+    distance = abs(_exact(qa_score) - _exact(primary_score))
     return distance <= exact_decimal(policy.qa_tolerance)
 
 

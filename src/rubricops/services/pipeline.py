@@ -13,8 +13,10 @@ for the next status, and then, all or nothing:
 - appends one hash-chained :class:`~rubricops.db.models.AuditEvent`.
 
 A second writer that read the same version gets :class:`StaleSubmission`, whether
-it arrives after the first commit (the version check) or races it (SQLAlchemy's
-version counter makes the UPDATE match no row).
+it arrives after the first commit (the version check) or races it: SQLAlchemy's
+version counter makes the UPDATE match no row, and a racing reviewing action that
+loses on the ``reviews`` unique key (or a racing append on ``audit_events``) is
+reported the same way, since every other constraint is checked before writing.
 """
 
 from __future__ import annotations
@@ -22,9 +24,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from fractions import Fraction
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -48,7 +52,7 @@ from rubricops.domain.pipeline import (
     decide,
 )
 from rubricops.domain.rubric import Rubric
-from rubricops.domain.scoring import ScoreResult, score_review
+from rubricops.domain.scoring import ScoreResult, exact_score, score_review
 from rubricops.domain.sla import SlaPolicy
 from rubricops.domain.versioning import UnchangedRubricError, canonical_json, content_hash
 from rubricops.services.audit import append_event
@@ -257,7 +261,10 @@ class PipelineService:
                     comment=comment,
                     context=context,
                 )
-        except StaleDataError as exc:
+        except (StaleDataError, IntegrityError) as exc:
+            # IntegrityError: a concurrent writer inserted this round's review (or the
+            # next audit link) first. Users, rubric versions and scores are all
+            # checked before any write, so a unique key is the only way to get here.
             raise StaleSubmission(submission_id, expected_version, None) from exc
 
     def _apply(
@@ -290,17 +297,14 @@ class PipelineService:
         actor = self._actor(session, actor_id)
         assignee = self._actor(session, assignee_id) if assignee_id is not None else None
         current = self._round(session, submission)
-        result: ScoreResult | None = None
-        if scores is not None:
-            rubric = self._pinned_rubric(session, submission.rubric_version_id)
-            result = score_review(rubric, scores)
+        result, exact, primary_exact = self._score(session, submission, current, scores)
 
         facts = Facts(
             status=source,
             author_id=submission.author_id,
             assignee_id=current.assignment.reviewer_id if current.assignment else None,
             primary_reviewer_id=current.primary.reviewer_id if current.primary else None,
-            primary_score=current.primary.score if current.primary else None,
+            primary_score=primary_exact,
             primary_passed=current.primary.passed if current.primary else None,
             qa_reviewer_id=current.qa.reviewer_id if current.qa else None,
         )
@@ -308,7 +312,7 @@ class PipelineService:
             action,
             actor,
             assignee=assignee,
-            score=result.score if result else None,
+            score=exact,
             passed=result.passed if result else None,
         )
         target = decide(facts, command, self._policy)
@@ -384,6 +388,24 @@ class PipelineService:
             score=result.score if result else None,
             passed=result.passed if result else None,
         )
+
+    def _score(
+        self,
+        session: Session,
+        submission: Submission,
+        current: _Round,
+        scores: Mapping[str, object] | None,
+    ) -> tuple[ScoreResult | None, Fraction | None, Fraction | None]:
+        """Score a reviewing action; return the result, its exact total and the primary's."""
+        if scores is None:
+            return None, None, None
+        rubric = self._pinned_rubric(session, submission.rubric_version_id)
+        primary_exact = None
+        if current.primary is not None:
+            # Re-scored exactly from the stored map: the stored float is rounded.
+            primary_rubric = self._pinned_rubric(session, current.primary.rubric_version_id)
+            primary_exact = exact_score(primary_rubric, current.primary.scores)
+        return score_review(rubric, scores), exact_score(rubric, scores), primary_exact
 
     @staticmethod
     def _write_review(
