@@ -15,8 +15,9 @@ under, whether a rubric edit silently changes verdicts, and whether reviewers
 actually agree with each other. RubricOps turns that process into typed, tested
 software. Today it ships the rubric and statistics core, a persisted review pipeline
 whose every transition lands on a hash-chained audit log, review-queue assignment
-policies with SLAs and reasoned QA sampling, a CLI and a Docker image; calibration
-and the web service are on the [Roadmap](#roadmap).
+policies with SLAs and reasoned QA sampling, reviewer calibration against gold items
+that feeds the QA sampler, a CLI and a Docker image; the web service is on the
+[Roadmap](#roadmap).
 
 ## What exists today
 
@@ -27,14 +28,15 @@ and the web service are on the [Roadmap](#roadmap).
 | Exact scoring | A `criterion -> score` map scored against a specific rubric version with exact decimals and `fractions.Fraction`, so a score that equals the threshold on paper passes. |
 | Agreement statistics | Cohen's kappa (unweighted, linear, quadratic), Fleiss' kappa and Krippendorff's alpha (nominal, interval) in numpy, checked against published worked examples. Degenerate data returns NaN with a reason instead of raising. |
 | Bootstrap intervals | Seeded percentile bootstrap over units, with degenerate resamples skipped and counted. |
-| Review pipeline | A pure state machine: queued -> assigned -> in_review -> reviewed -> finalized, or via qa_pending -> qa_passed / qa_failed -> in_adjudication -> finalized, plus returned_to_author and resubmission as a new round. Role and independence guards: nobody reviews their own submission, only the assignee submits the primary review, the QA auditor is not the primary reviewer, and the adjudicator is a lead who reviewed neither side. QA passes only when the verdicts match and the scores are within a tolerance. |
+| Review pipeline | A pure state machine: queued -> assigned -> in_review -> reviewed -> finalized, or via qa_pending -> qa_passed / qa_failed -> in_adjudication -> finalized, plus returned_to_author and resubmission as a new round. Role and independence guards: nobody reviews their own submission, only the assignee submits the primary review, the QA auditor is not the primary reviewer, and the adjudicator is a lead who reviewed neither side. QA passes only when the verdicts match and the exact (rational) scores are within a tolerance, so 11/15 vs 5/6 is exactly 0.1 apart. |
 | Persistence | Typed SQLAlchemy 2 models (users, rubrics and immutable versions, submissions, assignments, reviews, gold items, audit events) with CHECK constraints, SQLite foreign keys and WAL, and an Alembic migration shipped inside the package. |
-| Audit log | Each transition runs in one transaction: a Review pinned to the submission's rubric version, the final score (primary, or adjudicated after a QA disagreement) and one audit event with `hash = sha256(prev_hash + canonical event)`. Optimistic locking rejects a stale or racing double submit. The log and rubric versions are append-only through ORM guards and database triggers, and `verify_audit_chain` names the first broken link. |
+| Audit log | Each transition runs in one transaction: a Review pinned to the submission's rubric version, the final score (primary, or adjudicated after a QA disagreement) and one audit event with `hash = sha256(prev_hash + canonical event)`. Optimistic locking rejects a stale or racing double submit with `StaleSubmission`, including two reviewers racing to write the same review. The log and rubric versions are append-only through ORM guards and database triggers, and `verify_audit_chain` names the first broken link, including a payload that is no longer a JSON object. |
 | Review queue | Round-robin (a persisted cursor that is the last assigned reviewer id), skill-tag match (tags must cover the item's; ties by open load, then id) and load-balanced assignment with per-reviewer capacity caps. Every policy excludes the author and, for QA, the primary reviewer, and a refusal is a typed `NoEligibleReviewer` naming why each candidate was excluded. On the database, `QueueService.assign_next`, `sweep_overdue` and `sample_for_qa` act through the pipeline service, so every queue decision is an audited transition whose event records the policy and cursor, or the sampling reasons, draw, rate and seed. |
 | SLAs | A default turnaround (`RUBRICOPS_REVIEW_SLA_HOURS`) with per-rubric overrides; overdue detection reads an injected clock and returns an escalation list sorted by lateness. |
 | QA sampling | A seeded random rate (`RUBRICOPS_QA_SAMPLE_RATE`) plus risk rules: a new reviewer, a calibration flag, a score near the pass threshold (exact decimals) and a wide score spread on the item. Each decision records every reason, the draw and the rate; draws are keyed on seed, submission and round, so decisions do not depend on batch order. |
+| Reviewer calibration | From gold items with panel scores: per-reviewer exact-match rate, per-criterion MAE and pass/fail agreement; per-criterion mean signed error with a seeded bootstrap CI (reusing the stats bootstrap), called lenient or harsh only when the CI excludes 0; drift alerts when the MAE of the last window of gold reviews rises past a threshold; and scorecards with quadratic-weighted Cohen's kappa and interval Krippendorff's alpha against every peer. Flagged reviewers feed the QA sampler's `calibration_flag` rule. |
 | Strict loaders | YAML/JSON rubrics and scores with duplicate keys rejected; ratings CSVs in wide or long layout with repeated units, repeated (unit, rater) pairs and malformed quoting rejected, all with line numbers. |
-| CLI | `rubricops rubric validate\|diff\|score` and `rubricops agreement` (each with `--json`), `rubricops db upgrade\|downgrade\|current`, `rubricops pipeline walkthrough`, `rubricops audit verify` and `rubricops queue assign\|overdue\|sample`. |
+| CLI | `rubricops rubric validate\|diff\|score` and `rubricops agreement` (each with `--json`), `rubricops db upgrade\|downgrade\|current`, `rubricops pipeline walkthrough`, `rubricops audit verify`, `rubricops queue assign\|overdue\|sample` and `rubricops calibration report`. |
 | Packaging | A digest-pinned, non-root slim Docker image, `make demo` / `make docker-demo`, and CI that runs lint, strict typing, tests with a coverage gate, and the demo inside the image. |
 
 ## Quickstart
@@ -205,6 +207,48 @@ seed 20260929, rate 0.1: 4 of 8 sent to QA
   `RUBRICOPS_RANDOM_SEED`) and the risk-rule knobs `--min-reviews`, `--margin` and
   `--max-spread`. Items with no reason are finalized; the draw is still printed.
 
+### Reviewer calibration against gold items
+
+`rubricops calibration report` reads gold items with panel scores
+([gold.yaml](examples/calibration/gold.yaml)) and reviewers' blind reviews of them
+([reviews.yaml](examples/calibration/reviews.yaml)). The example data is synthetic and
+seeded (`scripts/gen_calibration_example.py`): 24 gold items of `code-explanation`,
+five reviewers, with chen one point lenient on clarity, bruno one point harsh on
+correctness and emeka drifting one point low halfway through.
+
+```console
+$ rubricops calibration report --reviewer chen
+rubric code-explanation: 5 reviewers, 95% bootstrap CIs (2000 resamples, seed 7)
+
+chen: 24 gold reviews, exact match 0.38, pass/fail agreement 0.88
+  criterion        MAE   mean error  CI                bias
+  correctness    0.125      +0.042  [-0.083, +0.208]  neutral
+  completeness   0.083      +0.000  [-0.125, +0.125]  neutral
+  clarity        0.625      +0.625  [+0.417, +0.792]  lenient
+  safe_advice    0.042      -0.042  [-0.125, +0.000]  neutral
+  vs asha     kappa(quadratic) +0.911  alpha(interval) +0.911  on 96 ratings
+  vs bruno    kappa(quadratic) +0.809  alpha(interval) +0.806  on 96 ratings
+  vs dara     kappa(quadratic) +0.895  alpha(interval) +0.895  on 96 ratings
+  vs emeka    kappa(quadratic) +0.790  alpha(interval) +0.783  on 96 ratings
+  flags: clarity lenient
+
+flagged for QA: bruno, chen, emeka
+
+$ rubricops calibration report --reviewer emeka | grep -E "drift|flags"
+  drift: emeka: mean absolute error rose +0.525 (0.175 -> 0.700) over the last 10 gold reviews, threshold 0.5
+  flags: correctness harsh, completeness harsh, clarity harsh, safe_advice harsh, drift
+```
+
+- A criterion is `lenient` or `harsh` only when the whole bootstrap interval of the
+  mean signed error (reviewer minus gold) is above or below 0; asha and dara, who
+  are unbiased with some noise, are not flagged. `--resamples` and `--seed` set the
+  bootstrap, `--window` and `--drift-threshold` the drift check, and a pass/fail
+  agreement below 0.8 is also a flag.
+- Peer agreement uses the (item, criterion) scores both reviewers gave.
+- `--format json` prints the same report as JSON, and `rubricops queue sample
+  --flags report.json` reads its `flagged` list: on the queue example with `--rate 0`
+  it sends 5 of 8 items to QA instead of 4, with the `calibration_flag` reason.
+
 ### Review pipeline and audit log
 
 `rubricops pipeline walkthrough` migrates a new database, adds five users and the
@@ -278,6 +322,10 @@ BROKEN at seq 26: hash does not match the event's content (25 events checked)
   Deleting the newest ones leaves a shorter chain that is still valid on its own, so
   keep the printed `anchor` somewhere else and pass it back with `--anchor SEQ:HASH`
   to catch that too.
+- `audit verify` on a missing SQLite file or a database without the audit table
+  exits 1 with a message and creates nothing. `pipeline walkthrough` checks first
+  that custom `--scores` take the three scripted routes, so a bad file never leaves
+  a half-written database.
 - `rubricops db upgrade|downgrade|current [--url URL]` runs the packaged Alembic
   migrations (`--sql` prints the DDL instead). `--url` defaults to
   `RUBRICOPS_DATABASE_URL`.
@@ -366,9 +414,9 @@ reproduces it.
 
 | What | Result | Command |
 | --- | --- | --- |
-| Tests | 637 passed | `make cov` |
-| Coverage (line and branch) | 100% of 2553 statements and 530 branches (the gate is 85%) | `make cov` |
-| Static checks | ruff clean, `mypy --strict` clean on 36 source files | `make lint typecheck` |
+| Tests | 689 passed | `make cov` |
+| Coverage (line and branch) | 100% of 2896 statements and 606 branches (the gate is 85%) | `make cov` |
+| Static checks | ruff clean, `mypy --strict` clean on 38 source files | `make lint typecheck` |
 | End-to-end demo | 4.5-5.6 s wall time over three runs, including the queue commands and the pipeline walkthrough | `time make demo` |
 | Pipeline walkthrough | 26 audit events, head hash `f3b4e8815a25`, identical on macOS and in the image | `make demo`, `make docker-demo` |
 | Bootstrap | 20,000 resamples of interval alpha on the 20-unit example in 0.8-1.1 s, including CLI start-up (three runs) | `time uv run rubricops agreement examples/ratings/correctness-3-reviewers.csv -m alpha-interval --resamples 20000` |
@@ -383,7 +431,10 @@ kappa = 1 for identical raters, the exact Fleiss/alpha relation on complete data
 that a rubric score stays in [0, 1] and rises with every criterion.
 
 The pipeline tests check all 110 (status, action) pairs and the role matrix against a
-table written out in the test, and tamper with the log in four ways: an edited
+table written out in the test, check QA agreement on every same-verdict pair of all
+three bundled rubrics at tolerances 0.05, 0.1 and 0.2 on exact scores, race two
+threads on the same review on a file database, and tamper with the log in four ways
+(plus payloads that are not JSON objects): an edited
 payload, a forged event with a recomputed hash, a deleted event and a truncated tail.
 A hypothesis random walk drives the service with legal and illegal actions by random
 users and checks that each applied transition adds exactly one audit event and one
@@ -450,8 +501,10 @@ Planned in [PLAN.md](PLAN.md) and **not built yet**:
 - **Queue commands on a live database:** `QueueService` exists and is tested on
   SQLite, but `rubricops queue` still reads scenario files; a `--url` mode will run
   the same commands against the database.
-- **Reviewer calibration (slice 5):** accuracy against gold items, per-criterion
-  leniency and harshness with bootstrap CIs, drift alerts and reviewer scorecards.
+- **Calibration history and pipeline scorecard fields (rest of slice 5):**
+  persisted calibration snapshots so drift is computed from stored history, gold
+  reviews read from the database instead of files, and scorecard fields that come
+  from pipeline history (QA and adjudication quality, throughput, on-time rate).
 - **Service and UI (slice 6):** FastAPI with JWT roles, an HTMX reviewer queue and
   lead dashboard, CSV/JSONL export.
 - **Seeded demo and compose (rest of slice 7):** a deterministic demo dataset,
@@ -480,16 +533,18 @@ make docker-build  # build rubricops:dev
 ```
 src/rubricops/
   domain/        pure logic: rubric models, versioning, diff, scoring, pipeline, clock,
-                 queue policies, SLAs, QA sampling
+                 queue policies, SLAs, QA sampling, calibration
   stats/         reliability data, agreement coefficients, bootstrap
   db/            SQLAlchemy models, engine and sessions, Alembic migrations
   services/      pipeline transactions, queue service, audit hash chain, the walkthrough
-  cli/           Typer commands: rubric, agreement, db, pipeline, audit, queue
+  cli/           Typer commands: rubric, agreement, db, pipeline, audit, queue, calibration
   loaders.py     strict YAML/JSON and ratings CSV loading
   scenario.py    queue scenario files for the queue commands
   settings.py    typed RUBRICOPS_* configuration
-examples/        original rubrics, sample scores, two ratings tables and a queue scenario
-scripts/demo.sh  the end-to-end demo behind make demo and make docker-demo
+examples/        original rubrics, sample scores, two ratings tables, a queue scenario
+                 and a synthetic gold set for calibration
+scripts/         demo.sh (behind make demo and make docker-demo) and the seeded
+                 calibration example generator
 tests/           pytest + hypothesis suite
 PLAN.md          design decisions and the implementation slices
 ```

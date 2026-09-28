@@ -346,7 +346,15 @@ Tests:
 - the sampling rate falls within binomial bounds for a fixed seed
 - the same seed gives the same decisions
 
-### Slice 5: Reviewer calibration and scorecards
+### Slice 5: Reviewer calibration and scorecards [x] done
+
+Done: `rubricops.domain.calibration` (gold accuracy, bias with bootstrap CIs, drift,
+scorecards with pairwise kappa and alpha, `is_flagged` for the sampler),
+`rubricops calibration report [--reviewer ID] [--format table|json]` over gold and
+review files, and `queue sample --flags`. Still open (in the README Roadmap): the
+persisted snapshots in `rubricops.services.calibration`, reading gold reviews from
+the database, and the scorecard fields that come from pipeline history (QA and
+adjudication quality, throughput, on-time rate).
 
 Goal: `rubricops.domain.calibration` computes, from gold items with known
 per-criterion scores:
