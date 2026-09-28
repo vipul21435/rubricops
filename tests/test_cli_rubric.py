@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,19 @@ CODE_V1 = EXAMPLES / "rubrics" / "code-explanation.v1.yaml"
 CODE_V2 = EXAMPLES / "rubrics" / "code-explanation.yaml"
 ACTION_ITEMS = EXAMPLES / "rubrics" / "action-items.yaml"
 REVIEW = EXAMPLES / "reviews" / "code-explanation-review.yaml"
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_BOX = re.compile("[\u2500-\u257f]")
+
+
+def _plain(text: str) -> str:
+    """Usage errors are rendered by rich: coloured when CI forces colour, and boxed.
+
+    Strip escape codes and box-drawing characters and collapse whitespace so the
+    assertion sees the message text only.
+    """
+    return " ".join(_BOX.sub(" ", _ANSI.sub("", text)).split())
 
 
 def _dump(path: Path, data: dict[str, Any]) -> Path:
@@ -173,7 +187,7 @@ def test_score_reports_every_problem() -> None:
 def test_score_usage_errors(extra: list[str], message: str) -> None:
     result = runner.invoke(app, ["rubric", "score", str(CODE_V2), *extra])
     assert result.exit_code == 2
-    assert message in " ".join(result.output.split())
+    assert message in _plain(result.output)
 
 
 def test_score_with_unreadable_inputs(tmp_path: Path) -> None:
