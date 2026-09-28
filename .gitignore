@@ -15,6 +15,7 @@ dist/
 coverage.xml
 htmlcov/
 .benchmarks/
+.hypothesis/
 
 # Local state
 .env
