@@ -14,9 +14,9 @@ decided by the process around the grading: which rubric version a score was give
 under, whether a rubric edit silently changes verdicts, and whether reviewers
 actually agree with each other. RubricOps turns that process into typed, tested
 software. Today it ships the rubric and statistics core, a persisted review pipeline
-whose every transition lands on a hash-chained audit log, a CLI and a Docker image;
-the review queue, QA sampling, calibration and web service are on the
-[Roadmap](#roadmap).
+whose every transition lands on a hash-chained audit log, review-queue assignment
+policies with SLAs and reasoned QA sampling, a CLI and a Docker image; calibration
+and the web service are on the [Roadmap](#roadmap).
 
 ## What exists today
 
@@ -30,8 +30,11 @@ the review queue, QA sampling, calibration and web service are on the
 | Review pipeline | A pure state machine: queued -> assigned -> in_review -> reviewed -> finalized, or via qa_pending -> qa_passed / qa_failed -> in_adjudication -> finalized, plus returned_to_author and resubmission as a new round. Role and independence guards: nobody reviews their own submission, only the assignee submits the primary review, the QA auditor is not the primary reviewer, and the adjudicator is a lead who reviewed neither side. QA passes only when the verdicts match and the scores are within a tolerance. |
 | Persistence | Typed SQLAlchemy 2 models (users, rubrics and immutable versions, submissions, assignments, reviews, gold items, audit events) with CHECK constraints, SQLite foreign keys and WAL, and an Alembic migration shipped inside the package. |
 | Audit log | Each transition runs in one transaction: a Review pinned to the submission's rubric version, the final score (primary, or adjudicated after a QA disagreement) and one audit event with `hash = sha256(prev_hash + canonical event)`. Optimistic locking rejects a stale or racing double submit. The log and rubric versions are append-only through ORM guards and database triggers, and `verify_audit_chain` names the first broken link. |
+| Review queue | Round-robin (a persisted cursor that is the last assigned reviewer id), skill-tag match (tags must cover the item's; ties by open load, then id) and load-balanced assignment with per-reviewer capacity caps. Every policy excludes the author and, for QA, the primary reviewer, and a refusal is a typed `NoEligibleReviewer` naming why each candidate was excluded. |
+| SLAs | A default turnaround (`RUBRICOPS_REVIEW_SLA_HOURS`) with per-rubric overrides; overdue detection reads an injected clock and returns an escalation list sorted by lateness. |
+| QA sampling | A seeded random rate (`RUBRICOPS_QA_SAMPLE_RATE`) plus risk rules: a new reviewer, a calibration flag, a score near the pass threshold (exact decimals) and a wide score spread on the item. Each decision records every reason, the draw and the rate; draws are keyed on seed, submission and round, so decisions do not depend on batch order. |
 | Strict loaders | YAML/JSON rubrics and scores with duplicate keys rejected; ratings CSVs in wide or long layout with repeated units, repeated (unit, rater) pairs and malformed quoting rejected, all with line numbers. |
-| CLI | `rubricops rubric validate\|diff\|score` and `rubricops agreement` (each with `--json`), `rubricops db upgrade\|downgrade\|current`, `rubricops pipeline walkthrough` and `rubricops audit verify`. |
+| CLI | `rubricops rubric validate\|diff\|score` and `rubricops agreement` (each with `--json`), `rubricops db upgrade\|downgrade\|current`, `rubricops pipeline walkthrough`, `rubricops audit verify` and `rubricops queue assign\|overdue\|sample`. |
 | Packaging | A digest-pinned, non-root slim Docker image, `make demo` / `make docker-demo`, and CI that runs lint, strict typing, tests with a coverage gate, and the demo inside the image. |
 
 ## Quickstart
@@ -44,7 +47,7 @@ git clone https://github.com/vipul21435/rubricops.git
 cd rubricops
 make install   # uv sync --frozen + pre-commit hooks
 make check     # ruff, mypy --strict, pytest with the coverage gate
-make demo      # rubrics, scoring, agreement, then the review pipeline and audit check
+make demo      # rubrics, scoring, agreement, the queue, then the pipeline and audit check
 ```
 
 With Docker instead of uv: `make docker-demo` builds the image, runs the same demo in
@@ -151,6 +154,57 @@ compatible with anything from chance to strong agreement.
 - `--json` prints the full result: observed and expected disagreement, counts,
   categories, the interval and the number of degenerate resamples skipped.
 
+### Review queue: assignment, overdue work, QA sampling
+
+The queue commands run on a scenario file: a snapshot of reviewers (skills, open
+load, capacity, completed reviews, calibration flag), queued items, handed-out
+assignments and primary reviews awaiting the finalize-or-QA decision. The example,
+[examples/queue/scenario.yaml](examples/queue/scenario.yaml), is made up.
+
+```console
+$ rubricops queue assign examples/queue/scenario.yaml --policy skill-match
+policy skill-match: 5 of 7 assigned
+    item  stage    tags               assigned to
+     101  primary  python             bruno (12)
+     102  primary  python,sql         asha (11)
+     103  qa       python             asha (11)
+     104  primary  docs               emeka (15)
+     105  primary  rust               UNASSIGNED (asha=at_capacity, bruno=missing_skills, chen=missing_skills, dara=at_capacity, emeka=at_capacity)
+     106  qa       python,sql         UNASSIGNED (asha=primary_reviewer, bruno=missing_skills, chen=missing_skills, dara=at_capacity, emeka=at_capacity)
+     107  primary  sql                chen (13)
+open loads after: asha=4, bruno=1, chen=2, dara=3, emeka=2
+
+$ rubricops queue overdue examples/queue/scenario.yaml
+as of 2026-09-29 09:00 UTC: 3 of 5 open assignments overdue (default SLA 24h)
+    item  stage    reviewer     due (UTC)         late by
+      91  primary  chen         2026-09-28 08:30  1d 00h 30m
+      94  qa       emeka        2026-09-28 18:00  15h 00m
+      90  primary  asha         2026-09-29 04:00  05h 00m
+
+$ rubricops queue sample examples/queue/scenario.yaml --seed 20260929 --rate 0.1
+seed 20260929, rate 0.1: 4 of 8 sent to QA
+      80  finalize  asha     none                            draw 0.1740 >= rate 0.1
+      81  QA        bruno    random+new_reviewer             draw 0.0892 < rate 0.1; 6 completed reviews < 20
+      82  QA        chen     near_threshold                  score 0.7200 within 0.05 of threshold 0.7
+      83  QA        dara     low_agreement                   item scores span 0.3500 > 0.25
+      84  QA        emeka    calibration_flag+near_threshold reviewer flagged by calibration; score 0.8000 within 0.05 of threshold 0.75
+      85  finalize  asha     none                            draw 0.9201 >= rate 0.1
+      86  finalize  chen     none                            draw 0.8365 >= rate 0.1
+      87  finalize  dara     none                            draw 0.9086 >= rate 0.1
+```
+
+- `--policy round-robin|skill-match|load-balanced` (default load-balanced). Each
+  assignment counts towards the reviewer's open load for the rest of the batch, so
+  capacity caps hold. Round-robin prints `cursor: ID`; pass it back with `--cursor`
+  to continue where the last run stopped.
+- `overdue` checks as of the scenario's `now` (or `--now`, else the system clock).
+  Assignment 90 uses the 8-hour `code-explanation` override, so it is due at 04:00
+  and five hours late; 93 is on the same rubric but not due until 10:00. Completed
+  assignments are skipped.
+- `sample` takes `--rate` and `--seed` (defaults from `RUBRICOPS_QA_SAMPLE_RATE` and
+  `RUBRICOPS_RANDOM_SEED`) and the risk-rule knobs `--min-reviews`, `--margin` and
+  `--max-spread`. Items with no reason are finalized; the draw is still printed.
+
 ### Review pipeline and audit log
 
 `rubricops pipeline walkthrough` migrates a new database, adds five users and the
@@ -236,10 +290,12 @@ flowchart LR
         RY["rubric YAML / JSON"]
         SY["scores YAML / JSON"]
         RC["ratings CSV, wide or long"]
+        QY["queue scenario YAML / JSON"]
     end
     subgraph cli["rubricops.cli (Typer)"]
         C1["rubric validate / diff / score"]
         C2["agreement"]
+        C4["queue assign / overdue / sample"]
     end
     L["rubricops.loaders<br/>strict parsing, line-numbered errors"]
     subgraph domain["rubricops.domain (pure)"]
@@ -247,6 +303,7 @@ flowchart LR
         V["versioning: canonical JSON, sha256, registry"]
         D["diff: affects_scoring"]
         S["scoring: exact Fraction arithmetic"]
+        Q["queue policies, SLA, QA sampler"]
     end
     subgraph stats["rubricops.stats (numpy)"]
         RD["ReliabilityData: encoded units x raters"]
@@ -266,6 +323,9 @@ flowchart LR
     RY --> L
     SY --> L
     RC --> L
+    QY --> L
+    C4 --> L
+    C4 --> Q
     C1 --> L
     C2 --> L
     L --> M
@@ -303,12 +363,13 @@ reproduces it.
 
 | What | Result | Command |
 | --- | --- | --- |
-| Tests | 555 passed | `make cov` |
-| Coverage (line and branch) | 100% of 1999 statements and 416 branches (the gate is 85%) | `make cov` |
-| Static checks | ruff clean, `mypy --strict` clean on 30 source files | `make lint typecheck` |
-| End-to-end demo | 3.4 s wall time, including the pipeline walkthrough | `time make demo` |
+| Tests | 627 passed | `make cov` |
+| Coverage (line and branch) | 100% of 2470 statements and 518 branches (the gate is 85%) | `make cov` |
+| Static checks | ruff clean, `mypy --strict` clean on 35 source files | `make lint typecheck` |
+| End-to-end demo | 4.5-5.6 s wall time over three runs, including the queue commands and the pipeline walkthrough | `time make demo` |
 | Pipeline walkthrough | 26 audit events, head hash `f3b4e8815a25`, identical on macOS and in the image | `make demo`, `make docker-demo` |
 | Bootstrap | 20,000 resamples of interval alpha on the 20-unit example in 0.8-1.1 s, including CLI start-up (three runs) | `time uv run rubricops agreement examples/ratings/correctness-3-reviewers.csv -m alpha-interval --resamples 20000` |
+| QA sampling rate | 1044 of 10,000 risk-free reviews sampled at rate 0.1 with seed 20260929 (expected 1000, one standard deviation 30); the test suite checks rates 0.05, 0.1 and 0.5 against 4-sigma binomial bounds | `uv run python -c "from rubricops.domain.sampling import *; s = QaSampler(SamplingRules(rate=0.1), 20260929); print(sum(d.sampled for d in s.decide_all(SampleCandidate(i, 1, 0.9, 0.7, 100) for i in range(10_000))))"` |
 | Docker image | 81 MB content size (81,050,772 bytes) | `docker image inspect rubricops:dev --format '{{.Size}}'` |
 
 The statistics tests reproduce published worked examples, with the source cited in
@@ -327,6 +388,14 @@ version, that refusals write nothing, that the chain verifies, and that nothing 
 finalized without a primary review in the current round. The migration tests run
 upgrade, downgrade and upgrade again, and check that autogenerate finds no drift from
 the models.
+
+The queue tests check, for every policy, that the author and the primary reviewer are
+never chosen and that a refusal names each candidate's exclusion; hypothesis
+properties check that round-robin shares out work within one item per reviewer and
+that load balancing never gives work to a reviewer while a lighter one is eligible.
+SLA tests run on a frozen clock (due exactly now is not late, one second later is).
+The sampler tests check that every applicable reason is recorded, that the same seed
+gives the same decisions in any order, and the binomial bounds above.
 
 ## Design decisions
 
@@ -372,9 +441,10 @@ the models.
 
 Planned in [PLAN.md](PLAN.md) and **not built yet**:
 
-- **Review queue (slice 4):** round-robin, skill-tag and load-balanced assignment,
-  SLAs with overdue detection, and seeded QA sampling that records why each item was
-  sampled.
+- **Queue service wiring (rest of slice 4):** `assign_next`, `sweep_overdue` and
+  `sample_for_qa` against the database, so the pipeline service assigns, escalates
+  and routes to QA with the policies above instead of the caller choosing. Today the
+  queue commands run on scenario files.
 - **Reviewer calibration (slice 5):** accuracy against gold items, per-criterion
   leniency and harshness with bootstrap CIs, drift alerts and reviewer scorecards.
 - **Service and UI (slice 6):** FastAPI with JWT roles, an HTMX reviewer queue and
@@ -385,9 +455,10 @@ Planned in [PLAN.md](PLAN.md) and **not built yet**:
   lands, only the SQLite triggers are exercised by tests.
 - **Benchmarks and docs (slice 8):** `make bench`, generated pipeline docs and ADRs.
 
-`.env.example` already lists settings for these slices (JWT, QA sample rate, SLA);
-today `RUBRICOPS_DATABASE_URL` (the default for `db` and `audit verify`) and
-`RUBRICOPS_RANDOM_SEED` are used.
+`.env.example` already lists the JWT settings for slice 6. Today
+`RUBRICOPS_DATABASE_URL` (the default for `db` and `audit verify`),
+`RUBRICOPS_RANDOM_SEED`, `RUBRICOPS_QA_SAMPLE_RATE` and `RUBRICOPS_REVIEW_SLA_HOURS`
+are used.
 
 ## Development
 
@@ -403,14 +474,16 @@ make docker-build  # build rubricops:dev
 
 ```
 src/rubricops/
-  domain/        pure logic: rubric models, versioning, diff, scoring, pipeline, clock
+  domain/        pure logic: rubric models, versioning, diff, scoring, pipeline, clock,
+                 queue policies, SLAs, QA sampling
   stats/         reliability data, agreement coefficients, bootstrap
   db/            SQLAlchemy models, engine and sessions, Alembic migrations
   services/      pipeline transactions, audit hash chain, the walkthrough
-  cli/           Typer commands: rubric, agreement, db, pipeline, audit
+  cli/           Typer commands: rubric, agreement, db, pipeline, audit, queue
   loaders.py     strict YAML/JSON and ratings CSV loading
+  scenario.py    queue scenario files for the queue commands
   settings.py    typed RUBRICOPS_* configuration
-examples/        original rubrics, sample scores and two ratings tables
+examples/        original rubrics, sample scores, two ratings tables and a queue scenario
 scripts/demo.sh  the end-to-end demo behind make demo and make docker-demo
 tests/           pytest + hypothesis suite
 PLAN.md          design decisions and the implementation slices

@@ -1,7 +1,8 @@
 #!/bin/sh
 # End-to-end demo on the bundled examples: validate and diff two versions of a
 # rubric, score one review against it, measure inter-rater agreement with
-# bootstrap intervals, then run the review pipeline on a fresh SQLite database and
+# bootstrap intervals, assign a review queue, list overdue work and sample
+# reviews for QA, then run the review pipeline on a fresh SQLite database and
 # verify its audit chain. Runs from a checkout (make demo) or inside the image
 # (make docker-demo), where RUBRICOPS=rubricops and the examples sit in the cwd.
 set -eu
@@ -25,6 +26,9 @@ step agreement "$EX/ratings/correctness-3-reviewers.csv" \
     --metric alpha-interval --metric alpha-nominal
 step agreement "$EX/ratings/verdicts-long.csv" --layout long \
     --metric cohen --metric alpha-nominal
+step queue assign "$EX/queue/scenario.yaml" --policy skill-match
+step queue overdue "$EX/queue/scenario.yaml"
+step queue sample "$EX/queue/scenario.yaml" --seed 20260929 --rate 0.1
 
 # The pipeline writes to a throwaway database outside the (possibly read-only) cwd.
 DB_DIR=$(mktemp -d)

@@ -268,7 +268,36 @@ Commits:
   properties: nothing reaches finalized without a primary review, and there is one
   audit event per applied transition
 
-### Slice 4: Review queue: assignment policies, SLAs and QA sampling
+### Slice 4: Review queue: assignment policies, SLAs and QA sampling [x] done (service wiring open)
+
+Decisions made while building it:
+- The capacity cap applies to every policy, not only `LoadBalanced`: a reviewer at
+  their cap takes no more work whichever policy is in use. Exclusions are checked in
+  a fixed order (author, primary reviewer, at capacity; then missing skills for
+  `SkillTagMatch`) and the first that applies is reported.
+- The round-robin cursor is the id of the last reviewer assigned, not a list index,
+  so a reviewer joining or leaving does not shift everyone's turn. It needs no table
+  of its own: the CLI prints it for the caller to keep, and the latest assignment
+  row already records it once the service is wired.
+- `assign_batch` counts each assignment towards the reviewer's open load for the
+  rest of the batch, so caps and balancing hold across a run.
+- Round-robin ignores skill tags by design; `SkillTagMatch` is the policy for
+  tagged work.
+- SLA: an assignment due exactly now is not late. The escalation list is sorted by
+  lateness, then submission id, then reviewer id, so it is a total order.
+- QA sampling draws from `random.Random(f"{seed}:{submission_id}:{round}")`, so a
+  decision depends only on the seed and the item, never on batch order or size,
+  and a resubmission gets a fresh draw. The draw is taken even when a risk rule
+  fires, so the random part stays an unbiased sample, and it is recorded.
+- "Low agreement between reviewers on the item" is measured as the spread (max -
+  min) of the normalised scores recorded on the item; it fires above
+  `max_score_spread` (default 0.25). The near-threshold rule compares exact
+  decimals, so a score exactly `margin` away counts as near.
+- The calibration hook is a `flagged` boolean per reviewer until slice 5 computes it.
+- The queue CLI runs on a scenario file (YAML or JSON, strict like the rubric
+  loader) so policies can be compared without a database.
+- Still open: `rubricops.services.queue` (`assign_next`, `sweep_overdue`,
+  `sample_for_qa` against the database, wired into the pipeline service).
 
 Goal: `rubricops.domain.queue` defines an `AssignmentPolicy` protocol with three
 policies:
